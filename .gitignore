@@ -1,0 +1,9 @@
+.env*
+.DS_Store
+node_modules/
+/CLAUDE.md
+/MILESTONE.md
+/TASKS.md
+/.claude/
+/go-connect
+/go-connect.exe
