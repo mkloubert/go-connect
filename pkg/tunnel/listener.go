@@ -40,6 +40,11 @@ const (
 	// DialTimeout is the maximum time to wait for a TCP connection
 	// to be established (broker or local service).
 	DialTimeout = 10 * time.Second
+
+	// OpenStreamAckTimeout is the maximum time to wait for an
+	// OpenStreamAck response from the remote listener before
+	// giving up and closing the local connection.
+	OpenStreamAckTimeout = 15 * time.Second
 )
 
 // Listener represents the listener side of the tunnel. It connects

@@ -27,6 +27,7 @@ import (
 	"net"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	pb "github.com/mkloubert/go-connect/pb"
 	"github.com/mkloubert/go-connect/pkg/protocol"
@@ -178,7 +179,8 @@ func (c *Connector) handleLocalConnection(localConn net.Conn) {
 		return
 	}
 
-	// Wait for OpenStreamAck before starting the data pump
+	// Wait for OpenStreamAck before starting the data pump.
+	// A timeout prevents goroutine leaks if the listener never responds.
 	select {
 	case success := <-ackCh:
 		if !success {
@@ -187,6 +189,12 @@ func (c *Connector) handleLocalConnection(localConn net.Conn) {
 			c.removeStream(streamID)
 			return
 		}
+	case <-time.After(OpenStreamAckTimeout):
+		log.Printf("connector: timed out waiting for OpenStreamAck for stream %d", streamID)
+		localConn.Close()
+		c.removeStream(streamID)
+		c.removePending(streamID)
+		return
 	case <-c.closeCh:
 		localConn.Close()
 		c.removeStream(streamID)
