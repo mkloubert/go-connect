@@ -43,16 +43,16 @@ type Session struct {
 }
 
 // NewSession creates a new encrypted Session over the given connection
-// using the provided 32-byte AES-256 key. Two separate AEAD instances
-// are created: one for sending and one for receiving, ensuring independent
-// nonce counters for each direction.
-func NewSession(conn io.ReadWriter, key []byte) (*Session, error) {
-	sendEnc, err := gocrypto.NewAEAD(key)
+// using separate 32-byte AES-256 keys for sending and receiving. This
+// ensures that each direction uses a different key, preventing AES-GCM
+// nonce reuse even though both directions start their counters at zero.
+func NewSession(conn io.ReadWriter, sendKey, recvKey []byte) (*Session, error) {
+	sendEnc, err := gocrypto.NewAEAD(sendKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create send AEAD: %w", err)
 	}
 
-	recvEnc, err := gocrypto.NewAEAD(key)
+	recvEnc, err := gocrypto.NewAEAD(recvKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create receive AEAD: %w", err)
 	}

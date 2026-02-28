@@ -46,7 +46,7 @@ func TestGenerateKeyPair(t *testing.T) {
 	}
 }
 
-func TestDeriveSharedKey(t *testing.T) {
+func TestDeriveDirectionalKeys(t *testing.T) {
 	// Alice generates her key pair
 	alice, err := GenerateKeyPair()
 	if err != nil {
@@ -59,30 +59,42 @@ func TestDeriveSharedKey(t *testing.T) {
 		t.Fatalf("GenerateKeyPair() for Bob returned error: %v", err)
 	}
 
-	// Alice derives a shared key using Bob's public key
-	aliceShared, err := DeriveSharedKey(alice, bob.PublicKeyBytes())
+	// Alice derives directional keys using Bob's public key
+	aliceKeys, err := DeriveDirectionalKeys(alice, bob.PublicKeyBytes())
 	if err != nil {
-		t.Fatalf("DeriveSharedKey() for Alice returned error: %v", err)
+		t.Fatalf("DeriveDirectionalKeys() for Alice returned error: %v", err)
 	}
 
-	// Bob derives a shared key using Alice's public key
-	bobShared, err := DeriveSharedKey(bob, alice.PublicKeyBytes())
+	// Bob derives directional keys using Alice's public key
+	bobKeys, err := DeriveDirectionalKeys(bob, alice.PublicKeyBytes())
 	if err != nil {
-		t.Fatalf("DeriveSharedKey() for Bob returned error: %v", err)
+		t.Fatalf("DeriveDirectionalKeys() for Bob returned error: %v", err)
 	}
 
-	// Both should derive the same shared key
-	if !bytes.Equal(aliceShared, bobShared) {
-		t.Fatal("Alice and Bob should derive the same shared key")
+	// Alice's send key must equal Bob's recv key (and vice versa)
+	if !bytes.Equal(aliceKeys.SendKey, bobKeys.RecvKey) {
+		t.Fatal("Alice's SendKey should equal Bob's RecvKey")
 	}
 
-	// The shared key should be 32 bytes (AES-256 key size)
-	if len(aliceShared) != AESKeySize {
-		t.Fatalf("shared key should be %d bytes, got %d", AESKeySize, len(aliceShared))
+	if !bytes.Equal(aliceKeys.RecvKey, bobKeys.SendKey) {
+		t.Fatal("Alice's RecvKey should equal Bob's SendKey")
+	}
+
+	// The two directional keys must be different from each other
+	if bytes.Equal(aliceKeys.SendKey, aliceKeys.RecvKey) {
+		t.Fatal("SendKey and RecvKey should be different")
+	}
+
+	// All keys should be 32 bytes (AES-256 key size)
+	if len(aliceKeys.SendKey) != AESKeySize {
+		t.Fatalf("SendKey should be %d bytes, got %d", AESKeySize, len(aliceKeys.SendKey))
+	}
+	if len(aliceKeys.RecvKey) != AESKeySize {
+		t.Fatalf("RecvKey should be %d bytes, got %d", AESKeySize, len(aliceKeys.RecvKey))
 	}
 }
 
-func TestDeriveSharedKey_DifferentKeysProduceDifferentSecrets(t *testing.T) {
+func TestDeriveDirectionalKeys_DifferentPeersProduceDifferentKeys(t *testing.T) {
 	// Alice generates her key pair
 	alice, err := GenerateKeyPair()
 	if err != nil {
@@ -101,20 +113,23 @@ func TestDeriveSharedKey_DifferentKeysProduceDifferentSecrets(t *testing.T) {
 		t.Fatalf("GenerateKeyPair() for Charlie returned error: %v", err)
 	}
 
-	// Alice-Bob shared key
-	aliceBobShared, err := DeriveSharedKey(alice, bob.PublicKeyBytes())
+	// Alice-Bob keys
+	aliceBobKeys, err := DeriveDirectionalKeys(alice, bob.PublicKeyBytes())
 	if err != nil {
-		t.Fatalf("DeriveSharedKey() Alice-Bob returned error: %v", err)
+		t.Fatalf("DeriveDirectionalKeys() Alice-Bob returned error: %v", err)
 	}
 
-	// Alice-Charlie shared key
-	aliceCharlieShared, err := DeriveSharedKey(alice, charlie.PublicKeyBytes())
+	// Alice-Charlie keys
+	aliceCharlieKeys, err := DeriveDirectionalKeys(alice, charlie.PublicKeyBytes())
 	if err != nil {
-		t.Fatalf("DeriveSharedKey() Alice-Charlie returned error: %v", err)
+		t.Fatalf("DeriveDirectionalKeys() Alice-Charlie returned error: %v", err)
 	}
 
-	// The shared keys should be different
-	if bytes.Equal(aliceBobShared, aliceCharlieShared) {
-		t.Fatal("shared keys with different peers should be different")
+	// Keys with different peers should be different
+	if bytes.Equal(aliceBobKeys.SendKey, aliceCharlieKeys.SendKey) {
+		t.Fatal("send keys with different peers should be different")
+	}
+	if bytes.Equal(aliceBobKeys.RecvKey, aliceCharlieKeys.RecvKey) {
+		t.Fatal("recv keys with different peers should be different")
 	}
 }

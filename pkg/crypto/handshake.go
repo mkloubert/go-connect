@@ -21,6 +21,7 @@
 package crypto
 
 import (
+	"bytes"
 	"crypto/ecdh"
 	"crypto/hkdf"
 	"crypto/rand"
@@ -31,7 +32,25 @@ import (
 const (
 	// HKDFInfo is the context info string used for HKDF key derivation.
 	HKDFInfo = "go-connect-v1"
+
+	// HKDFInfoClientToServer is the HKDF info string for the client-to-server
+	// direction key. The "client" is defined as the peer with the
+	// lexicographically smaller public key.
+	HKDFInfoClientToServer = "go-connect-v1-client-to-server"
+
+	// HKDFInfoServerToClient is the HKDF info string for the server-to-client
+	// direction key. The "server" is defined as the peer with the
+	// lexicographically larger public key.
+	HKDFInfoServerToClient = "go-connect-v1-server-to-client"
 )
+
+// DirectionalKeys holds two separate AES-256 keys for bidirectional
+// encrypted communication, one for each direction. This prevents
+// AES-GCM nonce reuse across directions.
+type DirectionalKeys struct {
+	SendKey []byte // Key for encrypting outgoing messages
+	RecvKey []byte // Key for decrypting incoming messages
+}
 
 // KeyPair holds an X25519 private and public key pair.
 type KeyPair struct {
@@ -57,10 +76,18 @@ func (kp *KeyPair) PublicKeyBytes() []byte {
 	return kp.PublicKey.Bytes()
 }
 
-// DeriveSharedKey performs an X25519 ECDH key exchange using the local key pair
-// and the remote peer's public key bytes, then derives a 32-byte AES-256 key
-// using HKDF-SHA256.
-func DeriveSharedKey(local *KeyPair, remotePublicKeyBytes []byte) ([]byte, error) {
+// DeriveDirectionalKeys performs an X25519 ECDH key exchange using the local
+// key pair and the remote peer's public key bytes, then derives two separate
+// 32-byte AES-256 keys using HKDF-SHA256 — one for each communication
+// direction. This prevents AES-GCM nonce reuse: each direction uses its own
+// key, so identical counter values on both sides never encrypt under the same
+// key.
+//
+// Direction is determined by lexicographic comparison of the public keys:
+// the peer with the smaller public key is the "client" and the other is the
+// "server". Both sides derive the same two keys and independently assign
+// send/recv based on their role.
+func DeriveDirectionalKeys(local *KeyPair, remotePublicKeyBytes []byte) (*DirectionalKeys, error) {
 	remotePubKey, err := ecdh.X25519().NewPublicKey(remotePublicKeyBytes)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse remote public key: %w", err)
@@ -71,10 +98,31 @@ func DeriveSharedKey(local *KeyPair, remotePublicKeyBytes []byte) ([]byte, error
 		return nil, fmt.Errorf("ECDH key exchange failed: %w", err)
 	}
 
-	derivedKey, err := hkdf.Key(sha256.New, sharedSecret, nil, HKDFInfo, AESKeySize)
+	// Derive two direction-specific keys using HKDF with different info strings.
+	clientToServerKey, err := hkdf.Key(sha256.New, sharedSecret, nil, HKDFInfoClientToServer, AESKeySize)
 	if err != nil {
-		return nil, fmt.Errorf("HKDF key derivation failed: %w", err)
+		return nil, fmt.Errorf("HKDF key derivation (client-to-server) failed: %w", err)
 	}
 
-	return derivedKey, nil
+	serverToClientKey, err := hkdf.Key(sha256.New, sharedSecret, nil, HKDFInfoServerToClient, AESKeySize)
+	if err != nil {
+		return nil, fmt.Errorf("HKDF key derivation (server-to-client) failed: %w", err)
+	}
+
+	// Determine direction based on lexicographic ordering of public keys.
+	// The peer with the smaller public key is the "client".
+	localPubBytes := local.PublicKeyBytes()
+	if bytes.Compare(localPubBytes, remotePublicKeyBytes) < 0 {
+		// Local is "client" (smaller public key)
+		return &DirectionalKeys{
+			SendKey: clientToServerKey,
+			RecvKey: serverToClientKey,
+		}, nil
+	}
+
+	// Local is "server" (larger public key)
+	return &DirectionalKeys{
+		SendKey: serverToClientKey,
+		RecvKey: clientToServerKey,
+	}, nil
 }

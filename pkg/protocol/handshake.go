@@ -97,14 +97,16 @@ func PerformHandshake(conn io.ReadWriter) (*Session, error) {
 		return nil, fmt.Errorf("handshake: remote public key is empty")
 	}
 
-	// Step 4: Derive shared AES-256 key.
-	sharedKey, err := gocrypto.DeriveSharedKey(keyPair, remotePubKey)
+	// Step 4: Derive directional AES-256 keys.
+	// Two separate keys are derived — one per direction — to prevent
+	// AES-GCM nonce reuse between peers sharing the same ECDH secret.
+	keys, err := gocrypto.DeriveDirectionalKeys(keyPair, remotePubKey)
 	if err != nil {
-		return nil, fmt.Errorf("handshake: failed to derive shared key: %w", err)
+		return nil, fmt.Errorf("handshake: failed to derive directional keys: %w", err)
 	}
 
-	// Step 5: Create encrypted session.
-	session, err := NewSession(conn, sharedKey)
+	// Step 5: Create encrypted session with direction-specific keys.
+	session, err := NewSession(conn, keys.SendKey, keys.RecvKey)
 	if err != nil {
 		return nil, fmt.Errorf("handshake: failed to create session: %w", err)
 	}

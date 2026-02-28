@@ -32,10 +32,14 @@ import (
 )
 
 func TestSession_SendReceiveEnvelope(t *testing.T) {
-	// Generate a random AES-256 key.
-	key := make([]byte, gocrypto.AESKeySize)
-	if _, err := rand.Read(key); err != nil {
-		t.Fatalf("failed to generate key: %v", err)
+	// Generate two random AES-256 keys for directional encryption.
+	sendKey := make([]byte, gocrypto.AESKeySize)
+	recvKey := make([]byte, gocrypto.AESKeySize)
+	if _, err := rand.Read(sendKey); err != nil {
+		t.Fatalf("failed to generate send key: %v", err)
+	}
+	if _, err := rand.Read(recvKey); err != nil {
+		t.Fatalf("failed to generate recv key: %v", err)
 	}
 
 	// Create a bidirectional pipe.
@@ -43,12 +47,13 @@ func TestSession_SendReceiveEnvelope(t *testing.T) {
 	defer clientConn.Close()
 	defer serverConn.Close()
 
-	clientSession, err := NewSession(clientConn, key)
+	// Client and server use complementary key assignments.
+	clientSession, err := NewSession(clientConn, sendKey, recvKey)
 	if err != nil {
 		t.Fatalf("failed to create client session: %v", err)
 	}
 
-	serverSession, err := NewSession(serverConn, key)
+	serverSession, err := NewSession(serverConn, recvKey, sendKey)
 	if err != nil {
 		t.Fatalf("failed to create server session: %v", err)
 	}
@@ -76,22 +81,27 @@ func TestSession_SendReceiveEnvelope(t *testing.T) {
 }
 
 func TestSession_SendReceiveData(t *testing.T) {
-	// Generate a random AES-256 key.
-	key := make([]byte, gocrypto.AESKeySize)
-	if _, err := rand.Read(key); err != nil {
-		t.Fatalf("failed to generate key: %v", err)
+	// Generate two random AES-256 keys for directional encryption.
+	sendKey := make([]byte, gocrypto.AESKeySize)
+	recvKey := make([]byte, gocrypto.AESKeySize)
+	if _, err := rand.Read(sendKey); err != nil {
+		t.Fatalf("failed to generate send key: %v", err)
+	}
+	if _, err := rand.Read(recvKey); err != nil {
+		t.Fatalf("failed to generate recv key: %v", err)
 	}
 
 	clientConn, serverConn := net.Pipe()
 	defer clientConn.Close()
 	defer serverConn.Close()
 
-	clientSession, err := NewSession(clientConn, key)
+	// Client and server use complementary key assignments.
+	clientSession, err := NewSession(clientConn, sendKey, recvKey)
 	if err != nil {
 		t.Fatalf("failed to create client session: %v", err)
 	}
 
-	serverSession, err := NewSession(serverConn, key)
+	serverSession, err := NewSession(serverConn, recvKey, sendKey)
 	if err != nil {
 		t.Fatalf("failed to create server session: %v", err)
 	}
