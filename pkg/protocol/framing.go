@@ -42,17 +42,15 @@ func WriteFrame(w io.Writer, payload []byte) error {
 		return fmt.Errorf("payload size %d exceeds maximum frame size %d", len(payload), MaxFrameSize)
 	}
 
-	header := make([]byte, frameLengthSize)
-	binary.BigEndian.PutUint32(header, uint32(len(payload)))
+	// Combine header and payload into a single buffer so the frame is
+	// written in one Write call, preventing stream corruption from a
+	// partial write between header and payload.
+	frame := make([]byte, frameLengthSize+len(payload))
+	binary.BigEndian.PutUint32(frame[:frameLengthSize], uint32(len(payload)))
+	copy(frame[frameLengthSize:], payload)
 
-	if _, err := w.Write(header); err != nil {
-		return fmt.Errorf("failed to write frame header: %w", err)
-	}
-
-	if len(payload) > 0 {
-		if _, err := w.Write(payload); err != nil {
-			return fmt.Errorf("failed to write frame payload: %w", err)
-		}
+	if _, err := w.Write(frame); err != nil {
+		return fmt.Errorf("failed to write frame: %w", err)
 	}
 
 	return nil
