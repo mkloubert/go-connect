@@ -165,6 +165,82 @@ func TestDecrypt_Tampered(t *testing.T) {
 	}
 }
 
+func TestDecrypt_ReplayRejected(t *testing.T) {
+	key := make([]byte, AESKeySize)
+	if _, err := rand.Read(key); err != nil {
+		t.Fatalf("failed to generate random key: %v", err)
+	}
+
+	sender, err := NewAEAD(key)
+	if err != nil {
+		t.Fatalf("NewAEAD() for sender returned error: %v", err)
+	}
+
+	receiver, err := NewAEAD(key)
+	if err != nil {
+		t.Fatalf("NewAEAD() for receiver returned error: %v", err)
+	}
+
+	plaintext := []byte("message to replay")
+
+	ciphertext, err := sender.Encrypt(plaintext)
+	if err != nil {
+		t.Fatalf("Encrypt() returned error: %v", err)
+	}
+
+	// First decrypt should succeed.
+	_, err = receiver.Decrypt(ciphertext)
+	if err != nil {
+		t.Fatalf("first Decrypt() returned error: %v", err)
+	}
+
+	// Replaying the same ciphertext should fail (nonce mismatch).
+	_, err = receiver.Decrypt(ciphertext)
+	if err == nil {
+		t.Fatal("replayed Decrypt() should have returned error")
+	}
+}
+
+func TestDecrypt_ReorderRejected(t *testing.T) {
+	key := make([]byte, AESKeySize)
+	if _, err := rand.Read(key); err != nil {
+		t.Fatalf("failed to generate random key: %v", err)
+	}
+
+	sender, err := NewAEAD(key)
+	if err != nil {
+		t.Fatalf("NewAEAD() for sender returned error: %v", err)
+	}
+
+	receiver, err := NewAEAD(key)
+	if err != nil {
+		t.Fatalf("NewAEAD() for receiver returned error: %v", err)
+	}
+
+	ct1, err := sender.Encrypt([]byte("first"))
+	if err != nil {
+		t.Fatalf("Encrypt() first returned error: %v", err)
+	}
+
+	ct2, err := sender.Encrypt([]byte("second"))
+	if err != nil {
+		t.Fatalf("Encrypt() second returned error: %v", err)
+	}
+
+	// Deliver out of order: ct2 first should fail (expects nonce 0, gets nonce 1).
+	_, err = receiver.Decrypt(ct2)
+	if err == nil {
+		t.Fatal("out-of-order Decrypt() should have returned error")
+	}
+
+	// Even delivering ct1 now should fail because the receiver counter
+	// has advanced past nonce 0.
+	_, err = receiver.Decrypt(ct1)
+	if err == nil {
+		t.Fatal("Decrypt() after counter advance should have returned error")
+	}
+}
+
 func TestDecryptWithCounter(t *testing.T) {
 	key := make([]byte, AESKeySize)
 	if _, err := rand.Read(key); err != nil {

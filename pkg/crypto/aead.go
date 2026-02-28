@@ -94,28 +94,46 @@ func (a *AEAD) Encrypt(plaintext []byte) ([]byte, error) {
 }
 
 // Decrypt decrypts the given ciphertext (with nonce prepended in the first 12 bytes)
-// using AES-256-GCM. The nonce from the wire is used for decryption as GCM
-// authenticates it. This method is thread-safe.
+// using AES-256-GCM. The wire nonce is validated against the expected counter-based
+// nonce to prevent replay and reorder attacks. This method is thread-safe.
 func (a *AEAD) Decrypt(ciphertextWithNonce []byte) ([]byte, error) {
 	if len(ciphertextWithNonce) < NonceSize {
 		return nil, errors.New("ciphertext too short: missing nonce")
 	}
 
-	nonce := ciphertextWithNonce[:NonceSize]
+	wireNonce := ciphertextWithNonce[:NonceSize]
 	ciphertext := ciphertextWithNonce[NonceSize:]
 
-	// Advance our own counter to stay in sync, but use the wire nonce
-	// for actual decryption since GCM authenticates it.
+	// Compute the expected nonce and verify the wire nonce matches.
+	// This ensures messages cannot be replayed or reordered.
 	a.mu.Lock()
-	a.counter++
+	expectedNonce := a.nextNonce()
 	a.mu.Unlock()
 
-	plaintext, err := a.gcm.Open(nil, nonce, ciphertext, nil)
+	if !nonceEqual(wireNonce, expectedNonce) {
+		return nil, fmt.Errorf("nonce mismatch: possible replay or reorder attack")
+	}
+
+	plaintext, err := a.gcm.Open(nil, wireNonce, ciphertext, nil)
 	if err != nil {
 		return nil, fmt.Errorf("decryption failed: %w", err)
 	}
 
 	return plaintext, nil
+}
+
+// nonceEqual compares two nonce byte slices in constant time is not
+// required here (nonces are not secret), so a simple comparison suffices.
+func nonceEqual(a, b []byte) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // nextNonce generates a 12-byte nonce with the counter value encoded
