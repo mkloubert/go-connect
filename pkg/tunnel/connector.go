@@ -198,6 +198,7 @@ func (c *Connector) handleLocalConnection(localConn net.Conn) {
 	case <-c.closeCh:
 		localConn.Close()
 		c.removeStream(streamID)
+		c.removePending(streamID)
 		return
 	}
 
