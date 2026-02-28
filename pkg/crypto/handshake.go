@@ -98,20 +98,33 @@ func DeriveDirectionalKeys(local *KeyPair, remotePublicKeyBytes []byte) (*Direct
 		return nil, fmt.Errorf("ECDH key exchange failed: %w", err)
 	}
 
+	// Build a per-session HKDF salt from both public keys in canonical
+	// (lexicographic) order. Both sides independently compute the same
+	// salt since they both hold both public keys. Hashing the
+	// concatenation produces a fixed-size, unambiguous salt that provides
+	// stronger key independence than the nil salt default (RFC 5869 §3.1).
+	localPubBytes := local.PublicKeyBytes()
+	var saltInput []byte
+	if bytes.Compare(localPubBytes, remotePublicKeyBytes) < 0 {
+		saltInput = append(localPubBytes, remotePublicKeyBytes...)
+	} else {
+		saltInput = append(remotePublicKeyBytes, localPubBytes...)
+	}
+	salt := sha256.Sum256(saltInput)
+
 	// Derive two direction-specific keys using HKDF with different info strings.
-	clientToServerKey, err := hkdf.Key(sha256.New, sharedSecret, nil, HKDFInfoClientToServer, AESKeySize)
+	clientToServerKey, err := hkdf.Key(sha256.New, sharedSecret, salt[:], HKDFInfoClientToServer, AESKeySize)
 	if err != nil {
 		return nil, fmt.Errorf("HKDF key derivation (client-to-server) failed: %w", err)
 	}
 
-	serverToClientKey, err := hkdf.Key(sha256.New, sharedSecret, nil, HKDFInfoServerToClient, AESKeySize)
+	serverToClientKey, err := hkdf.Key(sha256.New, sharedSecret, salt[:], HKDFInfoServerToClient, AESKeySize)
 	if err != nil {
 		return nil, fmt.Errorf("HKDF key derivation (server-to-client) failed: %w", err)
 	}
 
 	// Determine direction based on lexicographic ordering of public keys.
 	// The peer with the smaller public key is the "client".
-	localPubBytes := local.PublicKeyBytes()
 	if bytes.Compare(localPubBytes, remotePublicKeyBytes) < 0 {
 		// Local is "client" (smaller public key)
 		return &DirectionalKeys{
