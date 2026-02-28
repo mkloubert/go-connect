@@ -132,12 +132,6 @@ func TestEndToEnd_EchoTunnel(t *testing.T) {
 	}
 	defer conn.Close()
 
-	// Wait for the OpenStream/OpenStreamAck handshake to complete
-	// between the connector and listener through the broker. The
-	// listener spawns handleOpenStream in a goroutine, which must
-	// finish dialing the local echo server before data can flow.
-	time.Sleep(500 * time.Millisecond)
-
 	// 8. Send test message.
 	message := []byte("Hello through the encrypted tunnel!")
 	_, err = conn.Write(message)
@@ -212,10 +206,6 @@ func TestEndToEnd_MultipleStreams(t *testing.T) {
 				return
 			}
 			defer conn.Close()
-
-			// Wait for the OpenStream/OpenStreamAck handshake to
-			// complete before sending data.
-			time.Sleep(500 * time.Millisecond)
 
 			// Each stream sends unique data.
 			message := []byte(fmt.Sprintf("Stream %d: unique message data", streamIdx))

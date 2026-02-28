@@ -47,6 +47,16 @@ const (
 	OpenStreamAckTimeout = 15 * time.Second
 )
 
+// streamState tracks a stream's local connection and any data that
+// arrived before the connection was established. This prevents the
+// race condition where Data messages arrive while handleOpenStream
+// is still dialing the local service.
+type streamState struct {
+	conn  net.Conn // nil until local dial completes
+	buf   [][]byte // data buffered while conn is nil
+	ready bool     // true once conn is set (even on failure)
+}
+
 // Listener represents the listener side of the tunnel. It connects
 // to the broker, registers with a connection ID, and when a connector
 // opens a stream, it dials the local port to relay data back and forth.
@@ -56,7 +66,7 @@ type Listener struct {
 	brokerConn   net.Conn
 	session      *protocol.Session
 	connectionID string
-	streams      map[uint32]net.Conn
+	streams      map[uint32]*streamState
 	streamsMu    sync.Mutex
 	closeCh      chan struct{}
 	closeOnce    sync.Once
@@ -69,7 +79,7 @@ func NewListener(localPort, brokerAddr, connectionID string) *Listener {
 		localPort:    localPort,
 		brokerAddr:   brokerAddr,
 		connectionID: connectionID,
-		streams:      make(map[uint32]net.Conn),
+		streams:      make(map[uint32]*streamState),
 		closeCh:      make(chan struct{}),
 	}
 }
@@ -148,6 +158,12 @@ func (l *Listener) handleMessages() {
 		switch {
 		case env.GetOpenStream() != nil:
 			streamID := env.GetOpenStream().GetStreamId()
+			// Register the stream state immediately so that Data
+			// messages arriving while the dial is in progress get
+			// buffered instead of silently dropped.
+			l.streamsMu.Lock()
+			l.streams[streamID] = &streamState{}
+			l.streamsMu.Unlock()
 			go l.handleOpenStream(streamID)
 
 		case env.GetData() != nil:
@@ -174,13 +190,18 @@ func (l *Listener) handleMessages() {
 	}
 }
 
-// handleOpenStream dials the local port, stores the connection in the
-// streams map, sends an OpenStreamAck, and starts pumping data from
-// the local connection to the remote peer.
+// handleOpenStream dials the local port, sets the connection on the
+// pre-registered stream state, drains any buffered data, sends an
+// OpenStreamAck, and starts pumping data from the local connection
+// to the remote peer.
 func (l *Listener) handleOpenStream(streamID uint32) {
 	localConn, err := net.DialTimeout("tcp", net.JoinHostPort("127.0.0.1", l.localPort), DialTimeout)
 	if err != nil {
 		log.Printf("listener: failed to dial local port %s for stream %d: %v", l.localPort, streamID, err)
+		// Remove the pending stream state since the dial failed.
+		l.streamsMu.Lock()
+		delete(l.streams, streamID)
+		l.streamsMu.Unlock()
 		_ = l.session.Send(&pb.Envelope{
 			Payload: &pb.Envelope_OpenStreamAck{
 				OpenStreamAck: &pb.OpenStreamAck{
@@ -193,9 +214,30 @@ func (l *Listener) handleOpenStream(streamID uint32) {
 		return
 	}
 
+	// Set the connection and grab any buffered data that arrived
+	// while the dial was in progress.
 	l.streamsMu.Lock()
-	l.streams[streamID] = localConn
+	state, exists := l.streams[streamID]
+	if !exists {
+		// Stream was closed/removed while we were dialing.
+		l.streamsMu.Unlock()
+		localConn.Close()
+		return
+	}
+	state.conn = localConn
+	buffered := state.buf
+	state.buf = nil
+	state.ready = true
 	l.streamsMu.Unlock()
+
+	// Drain buffered data to the local connection.
+	for _, data := range buffered {
+		if _, err := localConn.Write(data); err != nil {
+			log.Printf("listener: failed to write buffered data to local stream %d: %v", streamID, err)
+			l.closeStream(streamID)
+			return
+		}
+	}
 
 	_ = l.session.Send(&pb.Envelope{
 		Payload: &pb.Envelope_OpenStreamAck{
@@ -259,35 +301,44 @@ func (l *Listener) pumpLocalToRemote(streamID uint32, localConn net.Conn) {
 }
 
 // handleData writes the received payload to the local stream connection
-// identified by the stream ID.
+// identified by the stream ID. If the stream's local connection is not
+// yet established (dial in progress), the data is buffered.
 func (l *Listener) handleData(data *pb.Data) {
 	l.streamsMu.Lock()
-	conn, ok := l.streams[data.GetStreamId()]
-	l.streamsMu.Unlock()
-
+	state, ok := l.streams[data.GetStreamId()]
 	if !ok {
+		l.streamsMu.Unlock()
 		return
 	}
 
-	_, err := conn.Write(data.GetPayload())
-	if err != nil {
+	if state.conn == nil {
+		// Connection not yet established; buffer the data.
+		state.buf = append(state.buf, append([]byte(nil), data.GetPayload()...))
+		l.streamsMu.Unlock()
+		return
+	}
+
+	conn := state.conn
+	l.streamsMu.Unlock()
+
+	if _, err := conn.Write(data.GetPayload()); err != nil {
 		log.Printf("listener: failed to write to local stream %d: %v", data.GetStreamId(), err)
 		l.closeStream(data.GetStreamId())
 	}
 }
 
-// closeStream closes the local connection for the given stream ID,
-// removes it from the map, and notifies the remote side.
+// closeStream closes the local connection for the given stream ID
+// and removes it from the map.
 func (l *Listener) closeStream(streamID uint32) {
 	l.streamsMu.Lock()
-	conn, ok := l.streams[streamID]
+	state, ok := l.streams[streamID]
 	if ok {
 		delete(l.streams, streamID)
 	}
 	l.streamsMu.Unlock()
 
-	if ok && conn != nil {
-		conn.Close()
+	if ok && state != nil && state.conn != nil {
+		state.conn.Close()
 	}
 }
 
@@ -312,9 +363,9 @@ func (l *Listener) Close() {
 		}
 
 		l.streamsMu.Lock()
-		for id, conn := range l.streams {
-			if conn != nil {
-				conn.Close()
+		for id, state := range l.streams {
+			if state != nil && state.conn != nil {
+				state.conn.Close()
 			}
 			delete(l.streams, id)
 		}
