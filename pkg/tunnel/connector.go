@@ -365,6 +365,19 @@ func (c *Connector) Close() {
 	c.closeOnce.Do(func() {
 		close(c.closeCh)
 
+		// Best-effort: send Disconnect to the broker before closing
+		// so the peer is notified immediately rather than waiting
+		// for the next failed read.
+		if c.session != nil {
+			_ = c.session.Send(&pb.Envelope{
+				Payload: &pb.Envelope_Disconnect{
+					Disconnect: &pb.Disconnect{
+						Reason: "connector shutting down",
+					},
+				},
+			})
+		}
+
 		// Close the broker connection to unblock any pending reads
 		// in the handleMessages goroutine.
 		if c.brokerConn != nil {
