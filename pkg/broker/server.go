@@ -151,7 +151,7 @@ func (s *Server) handleListener(client *ClientConn, connectionID string) {
 			Payload: &pb.Envelope_RegisterAck{
 				RegisterAck: &pb.RegisterAck{
 					Success: false,
-					Message: err.Error(),
+					Message: "registration failed",
 				},
 			},
 		})
@@ -183,7 +183,7 @@ func (s *Server) handleConnector(client *ClientConn, connectionID string) {
 			Payload: &pb.Envelope_ConnectAck{
 				ConnectAck: &pb.ConnectAck{
 					Success: false,
-					Message: err.Error(),
+					Message: "connection failed",
 				},
 			},
 		})
