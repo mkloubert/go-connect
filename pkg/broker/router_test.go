@@ -101,6 +101,42 @@ func TestRouter_LinkAndLookup(t *testing.T) {
 	}
 }
 
+func TestRouter_LinkDuplicateConnector(t *testing.T) {
+	r := NewRouter()
+	listener := newDummyClientConn(r)
+	connector1 := newDummyClientConn(r)
+	connector2 := newDummyClientConn(r)
+
+	const connID = "duplicate-connector-id"
+
+	if err := r.RegisterListener(connID, listener); err != nil {
+		t.Fatalf("RegisterListener returned unexpected error: %v", err)
+	}
+
+	if err := r.LinkConnector(connID, connector1); err != nil {
+		t.Fatalf("first LinkConnector returned unexpected error: %v", err)
+	}
+
+	// A second connector to the same connection ID must be rejected.
+	err := r.LinkConnector(connID, connector2)
+	if err == nil {
+		t.Fatal("second LinkConnector with same ID should return error, got nil")
+	}
+
+	// The first connector's peer link must remain intact.
+	if peer := r.GetPeer(listener); peer != connector1 {
+		t.Fatalf("GetPeer(listener) = %v, want original connector %v", peer, connector1)
+	}
+	if peer := r.GetPeer(connector1); peer != listener {
+		t.Fatalf("GetPeer(connector1) = %v, want listener %v", peer, listener)
+	}
+
+	// The rejected connector must have no peer link.
+	if peer := r.GetPeer(connector2); peer != nil {
+		t.Fatalf("GetPeer(connector2) = %v, want nil", peer)
+	}
+}
+
 func TestRouter_Remove(t *testing.T) {
 	r := NewRouter()
 	listener := newDummyClientConn(r)

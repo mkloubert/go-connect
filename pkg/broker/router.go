@@ -77,6 +77,11 @@ func (r *Router) LinkConnector(connectionID string, connector *ClientConn) error
 		return fmt.Errorf("no listener registered for connection ID %q", connectionID)
 	}
 
+	// Reject if a connector is already linked to this listener.
+	if _, linked := r.peers[listener]; linked {
+		return fmt.Errorf("connection ID %q already has a linked connector", connectionID)
+	}
+
 	r.peers[listener] = connector
 	r.peers[connector] = listener
 
