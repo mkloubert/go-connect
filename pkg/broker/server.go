@@ -35,6 +35,8 @@ type Server struct {
 	address  string
 	router   *Router
 	listener net.Listener
+	clients  map[*ClientConn]struct{}
+	clientMu sync.Mutex
 	wg       sync.WaitGroup
 	closeCh  chan struct{}
 }
@@ -45,6 +47,7 @@ func NewServer(address string) *Server {
 	return &Server{
 		address: address,
 		router:  NewRouter(),
+		clients: make(map[*ClientConn]struct{}),
 		closeCh: make(chan struct{}),
 	}
 }
@@ -101,6 +104,9 @@ func (s *Server) handleClient(conn net.Conn) {
 		conn.Close()
 		return
 	}
+
+	s.trackClient(client)
+	defer s.untrackClient(client)
 
 	// Read first message to determine client role.
 	env, err := client.Receive()
@@ -233,15 +239,36 @@ func (s *Server) relayMessages(client *ClientConn) {
 	}
 }
 
+// trackClient adds a client to the server's active set.
+func (s *Server) trackClient(client *ClientConn) {
+	s.clientMu.Lock()
+	s.clients[client] = struct{}{}
+	s.clientMu.Unlock()
+}
+
+// untrackClient removes a client from the server's active set.
+func (s *Server) untrackClient(client *ClientConn) {
+	s.clientMu.Lock()
+	delete(s.clients, client)
+	s.clientMu.Unlock()
+}
+
 // Stop gracefully shuts down the broker server. It closes the listener
-// to stop accepting new connections and waits for all active handler
-// goroutines to complete.
+// to stop accepting new connections, closes all active client connections
+// to unblock handler goroutines, and waits for them to complete.
 func (s *Server) Stop() {
 	close(s.closeCh)
 
 	if s.listener != nil {
 		s.listener.Close()
 	}
+
+	// Close all active client connections to unblock relayMessages loops.
+	s.clientMu.Lock()
+	for client := range s.clients {
+		client.Close()
+	}
+	s.clientMu.Unlock()
 
 	s.wg.Wait()
 }
