@@ -29,6 +29,13 @@ import (
 	pb "github.com/mkloubert/go-connect/pb"
 )
 
+const (
+	// DefaultMaxConnections is the maximum number of concurrent client
+	// connections the broker will accept. Connections beyond this limit
+	// are rejected immediately, before the expensive handshake.
+	DefaultMaxConnections = 1024
+)
+
 // Server is the broker server that accepts client connections,
 // performs handshakes, and relays messages between linked peers.
 type Server struct {
@@ -37,6 +44,7 @@ type Server struct {
 	listener net.Listener
 	clients  map[*ClientConn]struct{}
 	clientMu sync.Mutex
+	connSem  chan struct{} // semaphore limiting concurrent connections
 	wg       sync.WaitGroup
 	closeCh  chan struct{}
 }
@@ -48,6 +56,7 @@ func NewServer(address string) *Server {
 		address: address,
 		router:  NewRouter(),
 		clients: make(map[*ClientConn]struct{}),
+		connSem: make(chan struct{}, DefaultMaxConnections),
 		closeCh: make(chan struct{}),
 	}
 }
@@ -70,6 +79,7 @@ func (s *Server) Start() error {
 
 // acceptLoop accepts incoming connections and spawns a handler
 // goroutine for each. It runs until the listener is closed.
+// Connections are rejected when the server is at capacity.
 func (s *Server) acceptLoop() {
 	defer s.wg.Done()
 
@@ -85,9 +95,21 @@ func (s *Server) acceptLoop() {
 			}
 		}
 
+		// Reject the connection immediately if at capacity,
+		// before the expensive handshake.
+		select {
+		case s.connSem <- struct{}{}:
+			// Slot acquired.
+		default:
+			log.Printf("broker: connection limit reached, rejecting connection from %s", conn.RemoteAddr())
+			conn.Close()
+			continue
+		}
+
 		s.wg.Add(1)
 		go func() {
 			defer s.wg.Done()
+			defer func() { <-s.connSem }()
 			s.handleClient(conn)
 		}()
 	}
