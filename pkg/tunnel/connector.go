@@ -68,7 +68,7 @@ func NewConnector(brokerAddr, connectionID, localPort string) *Connector {
 // Start connects to the broker, performs the handshake, sends a
 // ConnectRequest, and starts listening for local connections.
 func (c *Connector) Start() error {
-	conn, err := net.Dial("tcp", c.brokerAddr)
+	conn, err := net.DialTimeout("tcp", c.brokerAddr, DialTimeout)
 	if err != nil {
 		return fmt.Errorf("connector: failed to dial broker at %s: %w", c.brokerAddr, err)
 	}

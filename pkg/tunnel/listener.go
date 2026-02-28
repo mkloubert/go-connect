@@ -26,6 +26,7 @@ import (
 	"log"
 	"net"
 	"sync"
+	"time"
 
 	pb "github.com/mkloubert/go-connect/pb"
 	"github.com/mkloubert/go-connect/pkg/protocol"
@@ -35,6 +36,10 @@ const (
 	// chunkSize is the size of the read buffer for pumping data
 	// from local connections to the remote peer via the broker.
 	chunkSize = 32 * 1024 // 32 KB
+
+	// DialTimeout is the maximum time to wait for a TCP connection
+	// to be established (broker or local service).
+	DialTimeout = 10 * time.Second
 )
 
 // Listener represents the listener side of the tunnel. It connects
@@ -67,7 +72,7 @@ func NewListener(localPort, brokerAddr, connectionID string) *Listener {
 // Start connects to the broker, performs the handshake, registers with
 // the connection ID, and launches the message handling goroutine.
 func (l *Listener) Start() error {
-	conn, err := net.Dial("tcp", l.brokerAddr)
+	conn, err := net.DialTimeout("tcp", l.brokerAddr, DialTimeout)
 	if err != nil {
 		return fmt.Errorf("listener: failed to dial broker at %s: %w", l.brokerAddr, err)
 	}
@@ -168,7 +173,7 @@ func (l *Listener) handleMessages() {
 // streams map, sends an OpenStreamAck, and starts pumping data from
 // the local connection to the remote peer.
 func (l *Listener) handleOpenStream(streamID uint32) {
-	localConn, err := net.Dial("tcp", net.JoinHostPort("127.0.0.1", l.localPort))
+	localConn, err := net.DialTimeout("tcp", net.JoinHostPort("127.0.0.1", l.localPort), DialTimeout)
 	if err != nil {
 		log.Printf("listener: failed to dial local port %s for stream %d: %v", l.localPort, streamID, err)
 		_ = l.session.Send(&pb.Envelope{
