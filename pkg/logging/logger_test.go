@@ -83,8 +83,8 @@ func TestLogger_Log_Format(t *testing.T) {
 
 	line := strings.TrimSpace(string(data))
 
-	// Format: [YYYYMMDD hh:mm:ss.zzz] [TAG] [SEVERITY]  MESSAGE
-	pattern := `^\[\d{8} \d{2}:\d{2}:\d{2}\.\d{3}\] \[AUTH\] \[WARN\]  test message$`
+	// Format: [YYYYMMDD hh:mm:ss.zzz] [TAG] [SEVERITY]\tMESSAGE
+	pattern := `^\[\d{8} \d{2}:\d{2}:\d{2}\.\d{3}\] \[AUTH\] \[WARN\]\ttest message$`
 	matched, err := regexp.MatchString(pattern, line)
 	if err != nil {
 		t.Fatalf("regexp error: %v", err)
