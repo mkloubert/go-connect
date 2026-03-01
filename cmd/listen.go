@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/google/uuid"
@@ -35,13 +36,20 @@ import (
 // with the broker. It generates a random connection ID, connects to the
 // broker, and forwards traffic to the specified local port.
 func NewListenCommand() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "listen <local-port> <broker-address>",
 		Short: "Register as listener with the broker",
 		Long:  "Connects to the broker and registers as a listener, forwarding traffic to a local service",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			connectionID := uuid.New().String()
+			connectionID, _ := cmd.Flags().GetString("id")
+			connectionID = strings.TrimSpace(connectionID)
+			if connectionID == "" {
+				connectionID = strings.TrimSpace(os.Getenv("GO_CONNECT_ID"))
+			}
+			if connectionID == "" {
+				connectionID = uuid.New().String()
+			}
 
 			listener := tunnel.NewListener(args[0], args[1], connectionID)
 			if err := listener.Start(); err != nil {
@@ -67,4 +75,8 @@ func NewListenCommand() *cobra.Command {
 			return nil
 		},
 	}
+
+	cmd.Flags().String("id", "", "connection ID to use (overrides GO_CONNECT_ID env var; auto-generated if empty)")
+
+	return cmd
 }
