@@ -60,10 +60,20 @@ func NewBrokerCommand() *cobra.Command {
 				passphrase = os.Getenv("GO_CONNECT_PASSPHRASE")
 			}
 
-			logger, err := logging.NewLogger("logs")
-			if err != nil {
-				out.Error("Failed to initialize security logger")
-				return fmt.Errorf("failed to create logger: %w", err)
+			enableSecurityLogs, _ := cmd.Flags().GetBool("enable-security-logs")
+			if !enableSecurityLogs && os.Getenv("GO_CONNECT_ENABLE_SECURITY_LOGS") == "1" {
+				enableSecurityLogs = true
+			}
+
+			var logger *logging.Logger
+			if enableSecurityLogs {
+				var err error
+				logger, err = logging.NewLogger("logs")
+				if err != nil {
+					out.Error("Failed to initialize security logger")
+					return fmt.Errorf("failed to create logger: %w", err)
+				}
+				out.Success("Security logging enabled (logs/)")
 			}
 
 			enableIPsum, _ := cmd.Flags().GetBool("enable-ipsum")
@@ -195,6 +205,7 @@ func NewBrokerCommand() *cobra.Command {
 	cmd.Flags().Bool("enable-ipsum", false, "enable IPsum IP blocking (overrides GO_CONNECT_ENABLE_IPSUM env var)")
 	cmd.Flags().Bool("enable-geo-blocker", false, "enable GeoLite2 country blocking (overrides GO_CONNECT_ENABLE_GEO_BLOCKER env var)")
 	cmd.Flags().String("blocked-countries", "", "comma-separated ISO country codes to block (overrides GO_CONNECT_BLOCKED_COUNTRIES env var)")
+	cmd.Flags().Bool("enable-security-logs", false, "enable security event logging (overrides GO_CONNECT_ENABLE_SECURITY_LOGS env var)")
 
 	return cmd
 }
