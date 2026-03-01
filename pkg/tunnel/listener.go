@@ -168,7 +168,6 @@ func (l *Listener) handleMessages() {
 
 		env, err := l.session.Receive()
 		if err != nil {
-			log.Printf("listener: receive error: %v", err)
 			return
 		}
 
@@ -198,7 +197,6 @@ func (l *Listener) handleMessages() {
 			})
 
 		case env.GetDisconnect() != nil:
-			log.Printf("listener: received disconnect: %s", env.GetDisconnect().GetReason())
 			return
 
 		default:
@@ -250,7 +248,6 @@ func (l *Listener) handleOpenStream(streamID uint32) {
 	// Drain buffered data to the local connection.
 	for _, data := range buffered {
 		if _, err := localConn.Write(data); err != nil {
-			log.Printf("listener: failed to write buffered data to local stream %d: %v", streamID, err)
 			l.closeStream(streamID)
 			return
 		}
@@ -293,7 +290,6 @@ func (l *Listener) pumpLocalToRemote(streamID uint32, localConn net.Conn) {
 				},
 			})
 			if sendErr != nil {
-				log.Printf("listener: failed to send data for stream %d: %v", streamID, sendErr)
 				l.closeStream(streamID)
 				return
 			}
@@ -301,7 +297,8 @@ func (l *Listener) pumpLocalToRemote(streamID uint32, localConn net.Conn) {
 
 		if err != nil {
 			if err != io.EOF {
-				log.Printf("listener: local read error for stream %d: %v", streamID, err)
+				// Expected during normal connection teardown (e.g. "use of closed network connection").
+				_ = err
 			}
 			// Notify remote side that the stream is closed.
 			_ = l.session.Send(&pb.Envelope{
@@ -339,7 +336,6 @@ func (l *Listener) handleData(data *pb.Data) {
 	l.streamsMu.Unlock()
 
 	if _, err := conn.Write(data.GetPayload()); err != nil {
-		log.Printf("listener: failed to write to local stream %d: %v", data.GetStreamId(), err)
 		l.closeStream(data.GetStreamId())
 	}
 }

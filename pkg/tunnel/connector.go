@@ -156,7 +156,6 @@ func (c *Connector) acceptLoop() {
 			case <-c.closeCh:
 				return
 			default:
-				log.Printf("connector: accept error: %v", err)
 				continue
 			}
 		}
@@ -189,7 +188,6 @@ func (c *Connector) handleLocalConnection(localConn net.Conn) {
 		},
 	})
 	if err != nil {
-		log.Printf("connector: failed to send OpenStream for stream %d: %v", streamID, err)
 		localConn.Close()
 		c.removeStream(streamID)
 		c.removePending(streamID)
@@ -201,13 +199,11 @@ func (c *Connector) handleLocalConnection(localConn net.Conn) {
 	select {
 	case success := <-ackCh:
 		if !success {
-			log.Printf("connector: stream %d rejected by listener", streamID)
 			localConn.Close()
 			c.removeStream(streamID)
 			return
 		}
 	case <-time.After(OpenStreamAckTimeout):
-		log.Printf("connector: timed out waiting for OpenStreamAck for stream %d", streamID)
 		localConn.Close()
 		c.removeStream(streamID)
 		c.removePending(streamID)
@@ -253,7 +249,6 @@ func (c *Connector) pumpLocalToRemote(streamID uint32, localConn net.Conn) {
 				},
 			})
 			if sendErr != nil {
-				log.Printf("connector: failed to send data for stream %d: %v", streamID, sendErr)
 				c.closeStream(streamID)
 				return
 			}
@@ -261,7 +256,8 @@ func (c *Connector) pumpLocalToRemote(streamID uint32, localConn net.Conn) {
 
 		if err != nil {
 			if err != io.EOF {
-				log.Printf("connector: local read error for stream %d: %v", streamID, err)
+				// Expected during normal connection teardown (e.g. "use of closed network connection").
+				_ = err
 			}
 			// Notify remote side that the stream is closed.
 			_ = c.session.Send(&pb.Envelope{
@@ -291,7 +287,6 @@ func (c *Connector) handleMessages() {
 
 		env, err := c.session.Receive()
 		if err != nil {
-			log.Printf("connector: receive error: %v", err)
 			return
 		}
 
@@ -309,7 +304,7 @@ func (c *Connector) handleMessages() {
 				ch <- ack.GetSuccess()
 			}
 			if !ack.GetSuccess() {
-				log.Printf("connector: OpenStream rejected for stream %d: %s", ack.GetStreamId(), ack.GetMessage())
+				_ = ack.GetMessage()
 			}
 
 		case env.GetData() != nil:
@@ -327,7 +322,6 @@ func (c *Connector) handleMessages() {
 			})
 
 		case env.GetDisconnect() != nil:
-			log.Printf("connector: received disconnect: %s", env.GetDisconnect().GetReason())
 			return
 
 		default:
@@ -349,7 +343,6 @@ func (c *Connector) handleData(data *pb.Data) {
 
 	_, err := conn.Write(data.GetPayload())
 	if err != nil {
-		log.Printf("connector: failed to write to local stream %d: %v", data.GetStreamId(), err)
 		c.closeStream(data.GetStreamId())
 	}
 }

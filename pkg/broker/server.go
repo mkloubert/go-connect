@@ -323,7 +323,6 @@ func (s *Server) relayMessages(client *ClientConn) {
 		}
 
 		if err := peer.Send(env); err != nil {
-			log.Printf("broker: failed to forward message to peer: %v", err)
 			client.Close()
 			return
 		}
