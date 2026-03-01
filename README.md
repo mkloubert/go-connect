@@ -36,65 +36,117 @@ go build -o go-connect .
 ### Start the broker
 
 ```bash
-./go-connect broker 0.0.0.0:1781
+./go-connect broker
+```
+
+This starts the broker on the default address `0.0.0.0:1781`.
+
+Custom bind address:
+
+```bash
+./go-connect broker --bind-to="192.168.1.10:2000"
+# or bind to a specific port on all interfaces:
+./go-connect b --bind-to=":2000"
 ```
 
 With optional passphrase protection:
 
 ```bash
-./go-connect broker 0.0.0.0:1781 --passphrase "my-secret"
+./go-connect broker --passphrase "my-secret"
 ```
 
 ### Expose a local service (Client A)
 
 ```bash
-./go-connect listen 5900 1.2.3.4:1781
+./go-connect listen --port=5900
 ```
 
-This prints a connection ID, e.g. `327ac625-3b0c-4bd7-ab1b-bb9d733774ae`.
+This connects to the default broker at `127.0.0.1:1781` and prints a connection ID, e.g. `327ac625-3b0c-4bd7-ab1b-bb9d733774ae`.
 
-With passphrase (must match the broker passphrase):
+With a remote broker:
 
 ```bash
-./go-connect listen 5900 1.2.3.4:1781 --passphrase "my-secret"
+./go-connect listen --port=5900 --broker="1.2.3.4:1781"
+# or using short flags:
+./go-connect l -p 5900 -b "1.2.3.4:1781"
 ```
+
+With passphrase and custom connection ID:
+
+```bash
+./go-connect listen --port=5900 --broker="1.2.3.4:1781" --id="my-custom-id" --passphrase "my-secret"
+```
+
+The `--broker` flag supports flexible address formats:
+
+| Format         | Result           |
+| -------------- | ---------------- |
+| `1.2.3.4:1781` | `1.2.3.4:1781`   |
+| `:1781`        | `127.0.0.1:1781` |
+| `1.2.3.4`      | `1.2.3.4:1781`   |
+| _(empty)_      | `127.0.0.1:1781` |
 
 ### Connect to the service (Client B)
 
 ```bash
-./go-connect connect 1.2.3.4:1781 327ac625-3b0c-4bd7-ab1b-bb9d733774ae 60000
+./go-connect connect --id="327ac625-3b0c-4bd7-ab1b-bb9d733774ae"
+```
+
+This connects to the default broker at `127.0.0.1:1781` and exposes the service on the default local port `12345`.
+
+With custom broker and port:
+
+```bash
+./go-connect connect --broker="1.2.3.4:1781" --id="327ac625-3b0c-4bd7-ab1b-bb9d733774ae" --port=60000
+# or using short flags:
+./go-connect c -b "1.2.3.4:1781" -i "327ac625-3b0c-4bd7-ab1b-bb9d733774ae" -p 60000
 ```
 
 With passphrase:
 
 ```bash
-./go-connect connect 1.2.3.4:1781 327ac625-3b0c-4bd7-ab1b-bb9d733774ae 60000 --passphrase "my-secret"
+./go-connect connect --broker="1.2.3.4:1781" --id="327ac625-3b0c-4bd7-ab1b-bb9d733774ae" --port=60000 --passphrase "my-secret"
 ```
 
-Now connect to `localhost:60000` on Client B to access the service on Client A's port 5900.
+Now connect to `localhost:60000` on Client B to access the service on Client A.
 
 ### Example: VNC tunnel
 
 ```bash
 # Client A: expose local VNC server
-./go-connect listen 5900 broker.example.com:1781 --passphrase "my-secret"
+./go-connect listen --port=5900 --broker="broker.example.com:1781" --passphrase "my-secret"
 # Output: Connection ID: 327ac625-3b0c-4bd7-ab1b-bb9d733774ae
 
 # Client B: make VNC available locally
-./go-connect connect broker.example.com:1781 327ac625-3b0c-4bd7-ab1b-bb9d733774ae 60000 --passphrase "my-secret"
+./go-connect connect --broker="broker.example.com:1781" --id="327ac625-3b0c-4bd7-ab1b-bb9d733774ae" --port=60000 --passphrase "my-secret"
 
 # Now open a VNC viewer on Client B and connect to localhost:60000
 ```
 
-### Environment variable
+### Command reference
 
-All commands support the `GO_CONNECT_PASSPHRASE` environment variable as an alternative to the `--passphrase` flag:
+| Command   | Alias | Required flags | Optional flags                                 |
+| --------- | ----- | -------------- | ---------------------------------------------- |
+| `broker`  | `b`   |                | `--bind-to`, `--passphrase`                    |
+| `listen`  | `l`   | `--port`/`-p`  | `--broker`/`-b`, `--id`/`-i`, `--passphrase`   |
+| `connect` | `c`   | `--id`/`-i`    | `--broker`/`-b`, `--port`/`-p`, `--passphrase` |
+| `version` |       |                |                                                |
+
+### Environment variables
+
+All commands support environment variables as alternatives to flags:
+
+| Variable                | Commands                | Purpose                       |
+| ----------------------- | ----------------------- | ----------------------------- |
+| `GO_CONNECT_PASSPHRASE` | broker, listen, connect | Passphrase for authentication |
+| `GO_CONNECT_ID`         | listen, connect         | Connection ID                 |
 
 ```bash
 export GO_CONNECT_PASSPHRASE="my-secret"
-./go-connect broker 0.0.0.0:1781
-./go-connect listen 5900 1.2.3.4:1781
-./go-connect connect 1.2.3.4:1781 <connection-id> 60000
+export GO_CONNECT_ID="327ac625-3b0c-4bd7-ab1b-bb9d733774ae"
+./go-connect broker
+./go-connect listen --port=5900 --broker="1.2.3.4:1781"
+./go-connect connect --broker="1.2.3.4:1781" --port=60000
 ```
 
 ### Version

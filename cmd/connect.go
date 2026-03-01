@@ -24,6 +24,8 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strconv"
+	"strings"
 	"syscall"
 
 	"github.com/mkloubert/go-connect/pkg/tunnel"
@@ -35,23 +37,39 @@ import (
 // and tunnels all traffic through the broker to the remote listener.
 func NewConnectCommand() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "connect <broker-address> <connection-id> <local-port>",
-		Short: "Connect to a listener via the broker",
-		Long:  "Connects to a listener through the broker and exposes the remote service on a local port",
-		Args:  cobra.ExactArgs(3),
+		Use:     "connect",
+		Aliases: []string{"c"},
+		Short:   "Connect to a listener via the broker",
+		Long:    "Connects to a listener through the broker and exposes the remote service on a local port",
+		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			brokerFlag, _ := cmd.Flags().GetString("broker")
+			brokerAddr := parseBrokerAddress(brokerFlag)
+
+			connectionID, _ := cmd.Flags().GetString("id")
+			connectionID = strings.TrimSpace(connectionID)
+			if connectionID == "" {
+				connectionID = strings.TrimSpace(os.Getenv("GO_CONNECT_ID"))
+			}
+			if connectionID == "" {
+				return fmt.Errorf("--id flag or GO_CONNECT_ID environment variable is required")
+			}
+
+			port, _ := cmd.Flags().GetInt("port")
+			localPort := strconv.Itoa(port)
+
 			passphrase, _ := cmd.Flags().GetString("passphrase")
 			if passphrase == "" {
 				passphrase = os.Getenv("GO_CONNECT_PASSPHRASE")
 			}
 
-			connector := tunnel.NewConnector(args[0], args[1], args[2], passphrase)
+			connector := tunnel.NewConnector(brokerAddr, connectionID, localPort, passphrase)
 			if err := connector.Start(); err != nil {
 				return fmt.Errorf("failed to start connector: %w", err)
 			}
 
-			fmt.Printf("Connected to listener %s via broker %s\n", args[1], args[0])
-			fmt.Printf("Local service available on port %s\n", args[2])
+			fmt.Printf("Connected to listener %s via broker %s\n", connectionID, brokerAddr)
+			fmt.Printf("Local service available on port %s\n", localPort)
 
 			sigCh := make(chan os.Signal, 1)
 			signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
@@ -69,6 +87,9 @@ func NewConnectCommand() *cobra.Command {
 		},
 	}
 
+	cmd.Flags().StringP("broker", "b", "127.0.0.1:1781", "broker address (host:port, :port, or host)")
+	cmd.Flags().StringP("id", "i", "", "connection ID of the listener to connect to (overrides GO_CONNECT_ID env var)")
+	cmd.Flags().IntP("port", "p", 12345, "local port to expose the service on")
 	cmd.Flags().String("passphrase", "", "passphrase for broker authentication (overrides GO_CONNECT_PASSPHRASE env var)")
 
 	return cmd

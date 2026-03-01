@@ -35,17 +35,21 @@ import (
 // clients.
 func NewBrokerCommand() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "broker <address>",
-		Short: "Start the broker server",
-		Long:  "Starts the broker (Vermittler) that relays encrypted connections between clients",
-		Args:  cobra.ExactArgs(1),
+		Use:     "broker",
+		Aliases: []string{"b"},
+		Short:   "Start the broker server",
+		Long:    "Starts the broker (Vermittler) that relays encrypted connections between clients",
+		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			bindFlag, _ := cmd.Flags().GetString("bind-to")
+			address := parseBindAddress(bindFlag)
+
 			passphrase, _ := cmd.Flags().GetString("passphrase")
 			if passphrase == "" {
 				passphrase = os.Getenv("GO_CONNECT_PASSPHRASE")
 			}
 
-			srv := broker.NewServer(args[0], broker.WithPassphrase(passphrase))
+			srv := broker.NewServer(address, broker.WithPassphrase(passphrase))
 
 			if err := srv.Start(); err != nil {
 				return fmt.Errorf("failed to start broker: %w", err)
@@ -64,6 +68,7 @@ func NewBrokerCommand() *cobra.Command {
 		},
 	}
 
+	cmd.Flags().String("bind-to", "0.0.0.0:1781", "address to listen on (host:port, :port, or host)")
 	cmd.Flags().String("passphrase", "", "passphrase for client authentication (overrides GO_CONNECT_PASSPHRASE env var)")
 
 	return cmd
