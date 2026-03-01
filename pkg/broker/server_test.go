@@ -26,11 +26,13 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	pb "github.com/mkloubert/go-connect/pb"
+	"github.com/mkloubert/go-connect/pkg/ipsum"
 	"github.com/mkloubert/go-connect/pkg/logging"
 	"github.com/mkloubert/go-connect/pkg/protocol"
 )
@@ -454,5 +456,149 @@ func TestServer_Log_InvalidConnectionID(t *testing.T) {
 	}
 	if !strings.Contains(content, "invalid connection ID") {
 		t.Errorf("expected 'invalid connection ID' in log, got: %q", content)
+	}
+}
+
+// newTestIPFilter creates an IPsum DB loaded with the given IPs.
+func newTestIPFilter(t *testing.T, ips map[string]int, minCount int) *ipsum.DB {
+	t.Helper()
+
+	db := ipsum.NewDB(minCount)
+
+	var feed strings.Builder
+	feed.WriteString("# test feed\n")
+	for ip, count := range ips {
+		feed.WriteString(ip)
+		feed.WriteString("\t")
+		feed.WriteString(strconv.Itoa(count))
+		feed.WriteString("\n")
+	}
+
+	if err := db.LoadFromReader(strings.NewReader(feed.String()), nil); err != nil {
+		t.Fatalf("failed to load test IP filter: %v", err)
+	}
+	return db
+}
+
+func TestServer_IPFilter_BlocksBlacklistedIP(t *testing.T) {
+	logger, logDir := newTestLogger(t)
+
+	// The test connects from 127.0.0.1, so block that.
+	filter := newTestIPFilter(t, map[string]int{
+		"127.0.0.1": 5,
+	}, 3)
+
+	srv := NewServer("127.0.0.1:0",
+		WithLogger(logger),
+		WithIPFilter(filter),
+	)
+	if err := srv.Start(); err != nil {
+		t.Fatalf("failed to start broker: %v", err)
+	}
+	defer srv.Stop()
+
+	addr := srv.Address()
+
+	// Try to connect — should be silently rejected.
+	conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
+	if err != nil {
+		t.Fatalf("failed to dial broker: %v", err)
+	}
+	defer conn.Close()
+
+	// The broker should close the connection immediately.
+	// Try to read — should get EOF or error.
+	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	buf := make([]byte, 1)
+	_, err = conn.Read(buf)
+	if err == nil {
+		t.Fatal("expected connection to be closed by broker, but read succeeded")
+	}
+
+	// Allow broker to write the log entry.
+	time.Sleep(100 * time.Millisecond)
+
+	content := readLogContent(t, logDir)
+	if !strings.Contains(content, "[IPBLOCK]") {
+		t.Errorf("expected IPBLOCK tag in log, got: %q", content)
+	}
+	if !strings.Contains(content, "[WARN]") {
+		t.Errorf("expected WARN severity in log, got: %q", content)
+	}
+	if !strings.Contains(content, "blocked connection from") {
+		t.Errorf("expected 'blocked connection from' in log, got: %q", content)
+	}
+	if !strings.Contains(content, "ipsum count=5") {
+		t.Errorf("expected 'ipsum count=5' in log, got: %q", content)
+	}
+}
+
+func TestServer_IPFilter_AllowsNonBlacklistedIP(t *testing.T) {
+	// Block a different IP, not 127.0.0.1.
+	filter := newTestIPFilter(t, map[string]int{
+		"10.20.30.40": 8,
+	}, 3)
+
+	srv := NewServer("127.0.0.1:0", WithIPFilter(filter))
+	if err := srv.Start(); err != nil {
+		t.Fatalf("failed to start broker: %v", err)
+	}
+	defer srv.Stop()
+
+	addr := srv.Address()
+
+	// Connect from 127.0.0.1 which is NOT blocked — handshake should work.
+	conn, session := dialAndHandshake(t, addr)
+	defer conn.Close()
+
+	// Send Register to confirm the connection works end-to-end.
+	if err := session.Send(&pb.Envelope{
+		Payload: &pb.Envelope_Register{
+			Register: &pb.Register{
+				ConnectionId: "ip-filter-allow-test",
+			},
+		},
+	}); err != nil {
+		t.Fatalf("failed to send Register: %v", err)
+	}
+
+	ack, err := session.Receive()
+	if err != nil {
+		t.Fatalf("failed to receive RegisterAck: %v", err)
+	}
+	if !ack.GetRegisterAck().GetSuccess() {
+		t.Fatalf("RegisterAck not successful: %s", ack.GetRegisterAck().GetMessage())
+	}
+}
+
+func TestServer_IPFilter_NoFilterAllowsAll(t *testing.T) {
+	// No IP filter set — all connections should be accepted.
+	srv := NewServer("127.0.0.1:0")
+	if err := srv.Start(); err != nil {
+		t.Fatalf("failed to start broker: %v", err)
+	}
+	defer srv.Stop()
+
+	addr := srv.Address()
+
+	conn, session := dialAndHandshake(t, addr)
+	defer conn.Close()
+
+	if err := session.Send(&pb.Envelope{
+		Payload: &pb.Envelope_Register{
+			Register: &pb.Register{
+				ConnectionId: "no-filter-test",
+			},
+		},
+	}); err != nil {
+		t.Fatalf("failed to send Register: %v", err)
+	}
+
+	ack, err := session.Receive()
+	if err != nil {
+		t.Fatalf("failed to receive RegisterAck: %v", err)
+	}
+	if !ack.GetRegisterAck().GetSuccess() {
+		t.Fatalf("RegisterAck not successful: %s", ack.GetRegisterAck().GetMessage())
 	}
 }

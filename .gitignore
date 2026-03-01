@@ -8,3 +8,5 @@ node_modules/
 /go-connect
 /go-connect.exe
 /logs/
+/ipsum.txt
+/ipsum.txt.tmp

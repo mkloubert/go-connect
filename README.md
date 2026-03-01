@@ -5,18 +5,18 @@ A CLI tool that creates encrypted TCP tunnels between two clients via a broker. 
 ## How it works
 
 ```
-Client A (listen)          Broker              Client B (connect)
-     |                       |                       |
-     |--- TCP + Handshake -->|                       |
-     |--- Authenticate ----->|                       |
-     |--- Register(ID) ----->|                       |
-     |                       |<-- TCP + Handshake ---|
-     |                       |<-- Authenticate ------|
-     |                       |<-- Connect(ID) -------|
-     |                       |                       |
+Client A (listen)                Broker              Client B (connect)
+     |                             |                       |
+     |------ TCP + Handshake ----->|                       |
+     |------ Authenticate -------->|                       |
+     |------ Register(ID) -------->|                       |
+     |                             |<-- TCP + Handshake ---|
+     |                             |<-- Authenticate ------|
+     |                             |<-- Connect(ID) -------|
+     |                             |                       |
      |<=== Encrypted Tunnel ==== Broker ==== Encrypted Tunnel ===>|
-     |                       |                       |
-Local Service (e.g. VNC)                        Local TCP Port
+     |                             |                       |
+Local Service (e.g. VNC)                               Local TCP Port
 ```
 
 - **Client A** runs `listen` to expose a local service through the broker
@@ -35,15 +35,15 @@ Binaries are available for:
 
 | OS           | Architectures                                                                                     |
 | ------------ | ------------------------------------------------------------------------------------------------- |
+| AIX          | ppc64                                                                                             |
+| DragonflyBSD | amd64                                                                                             |
+| FreeBSD      | amd64, arm64, 386, armv7                                                                          |
 | Linux        | amd64, arm64, armv7, 386, loong64, mips, mipsle, mips64, mips64le, ppc64, ppc64le, riscv64, s390x |
 | macOS        | amd64, arm64 (Apple Silicon)                                                                      |
-| Windows      | amd64, arm64, 386                                                                                 |
-| FreeBSD      | amd64, arm64, 386, armv7                                                                          |
-| OpenBSD      | amd64, arm64, 386, armv7                                                                          |
 | NetBSD       | amd64, arm64, 386                                                                                 |
-| DragonflyBSD | amd64                                                                                             |
+| OpenBSD      | amd64, arm64, 386, armv7                                                                          |
 | Solaris      | amd64                                                                                             |
-| AIX          | ppc64                                                                                             |
+| Windows      | amd64, arm64, 386                                                                                 |
 
 Each release includes SHA-256 checksums in `checksums.txt`.
 
@@ -158,12 +158,12 @@ Now connect to `localhost:60000` on Client B to access the service on Client A.
 
 ### Command reference
 
-| Command   | Alias | Required flags | Optional flags                                 |
-| --------- | ----- | -------------- | ---------------------------------------------- |
-| `broker`  | `b`   |                | `--bind-to`, `--passphrase`                    |
-| `listen`  | `l`   | `--port`/`-p`  | `--broker`/`-b`, `--id`/`-i`, `--passphrase`   |
-| `connect` | `c`   | `--id`/`-i`    | `--broker`/`-b`, `--port`/`-p`, `--passphrase` |
-| `version` |       |                |                                                |
+| Command   | Alias | Required flags | Optional flags                                    |
+| --------- | ----- | -------------- | ------------------------------------------------- |
+| `broker`  | `b`   |                | `--bind-to`, `--passphrase`, `--do-not-block-ips` |
+| `connect` | `c`   | `--id`/`-i`    | `--broker`/`-b`, `--port`/`-p`, `--passphrase`    |
+| `listen`  | `l`   | `--port`/`-p`  | `--broker`/`-b`, `--id`/`-i`, `--passphrase`      |
+| `version` |       |                |                                                   |
 
 ### Global flags
 
@@ -171,10 +171,10 @@ These flags are available on all commands:
 
 | Flag            | Short | Default | Description                                                                     |
 | --------------- | ----- | ------- | ------------------------------------------------------------------------------- |
-| `--verbose`     | `-v`  | `false` | Show technical details (handshake timing, stream IDs, debug info)               |
-| `--quiet`       | `-q`  | `false` | Only errors and essential info (connection ID for listener)                     |
-| `--no-color`    |       | `false` | Disable colored output (automatic when piped; also respects `NO_COLOR` env var) |
 | `--max-retries` |       | `10`    | Max reconnect attempts (`-1` = infinite, `0` = disabled)                        |
+| `--no-color`    |       | `false` | Disable colored output (automatic when piped; also respects `NO_COLOR` env var) |
+| `--quiet`       | `-q`  | `false` | Only errors and essential info (connection ID for listener)                     |
+| `--verbose`     | `-v`  | `false` | Show technical details (handshake timing, stream IDs, debug info)               |
 
 ### Output modes
 
@@ -208,14 +208,16 @@ Press `Ctrl+C` during reconnect to cancel immediately.
 
 All commands support environment variables as alternatives to flags:
 
-| Variable                 | Commands                | Purpose                              |
-| ------------------------ | ----------------------- | ------------------------------------ |
-| `GO_CONNECT_PASSPHRASE`  | broker, listen, connect | Passphrase for authentication        |
-| `GO_CONNECT_ID`          | listen, connect         | Connection ID                        |
-| `GO_CONNECT_VERBOSE`     | all                     | Set to `1` to enable verbose mode    |
-| `GO_CONNECT_QUIET`       | all                     | Set to `1` to enable quiet mode      |
-| `GO_CONNECT_MAX_RETRIES` | listen, connect         | Max reconnect attempts               |
-| `NO_COLOR`               | all                     | Set to `1` to disable colored output |
+| Variable                      | Commands                | Purpose                              |
+| ----------------------------- | ----------------------- | ------------------------------------ |
+| `GO_CONNECT_DO_NOT_BLOCK_IPS` | broker                  | Set to `1` to disable IP blocking    |
+| `GO_CONNECT_ID`               | listen, connect         | Connection ID                        |
+| `GO_CONNECT_IPSUM_SOURCE`     | broker                  | Custom URL for the IPsum feed        |
+| `GO_CONNECT_MAX_RETRIES`      | listen, connect         | Max reconnect attempts               |
+| `GO_CONNECT_PASSPHRASE`       | broker, listen, connect | Passphrase for authentication        |
+| `GO_CONNECT_QUIET`            | all                     | Set to `1` to enable quiet mode      |
+| `GO_CONNECT_VERBOSE`          | all                     | Set to `1` to enable verbose mode    |
+| `NO_COLOR`                    | all                     | Set to `1` to disable colored output |
 
 ```bash
 export GO_CONNECT_PASSPHRASE="my-secret"
@@ -241,7 +243,26 @@ export GO_CONNECT_ID="327ac625-3b0c-4bd7-ab1b-bb9d733774ae"
 - **Framing:** Length-prefixed with 1 MB max frame size (DoS protection)
 - **Heartbeat:** 15s interval, 45s timeout for disconnect detection
 - **Silent Rejection:** Wrong passphrase causes silent connection close (no information leakage)
+- **IP Threat Filter:** Automatic blocking of known malicious IPs via [IPsum](https://github.com/stamparm/ipsum) threat intelligence (loaded on startup)
 - **Security Logging:** File-based audit log for suspicious activity (see below)
+
+### IPsum threat intelligence filter
+
+On startup, the broker loads the [IPsum](https://github.com/stamparm/ipsum) threat intelligence feed from a local file (`ipsum.txt` in the working directory). If the file does not exist, it is downloaded automatically. If the download fails and no local file is available, the broker exits with an error.
+
+IPs that appear on 3 or more blacklists are blocked before the handshake. This means blocked connections are rejected at the TCP level with no protocol overhead.
+
+The feed is downloaded from:
+
+```
+https://raw.githubusercontent.com/stamparm/ipsum/master/ipsum.txt
+```
+
+To disable IP blocking entirely, use `--do-not-block-ips` or set `GO_CONNECT_DO_NOT_BLOCK_IPS=1`. When disabled, the `ipsum.txt` file is not required and no IP checks are performed.
+
+Unparseable lines in the feed are logged as warnings to the console (not to the security log files).
+
+Only IPs meeting the threshold are stored in memory. IPv6 addresses are not filtered (IPsum covers IPv4 only).
 
 ### Security logging
 
@@ -257,9 +278,10 @@ The following events are logged:
 
 | Event                 | Tag       | What is logged                                                                                                                    |
 | --------------------- | --------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| Blocked IP            | `IPBLOCK` | Remote IP, port, and IPsum blacklist count. Connection rejected before handshake.                                                 |
 | Invalid auth payload  | `AUTH`    | Raw content as Base64 (max 256 bytes), remote IP and port. Detects bots trying services like SSH or HTTP against the broker port. |
-| Wrong passphrase      | `AUTH`    | Remote IP and port only. The passphrase value is never logged.                                                                    |
 | Invalid connection ID | `ROUTING` | Remote IP, port, and the submitted connection ID value.                                                                           |
+| Wrong passphrase      | `AUTH`    | Remote IP and port only. The passphrase value is never logged.                                                                    |
 
 The logger is memory-optimized: files are opened in append mode for each write and closed immediately after. This avoids memory issues during high volumes of connection attempts.
 
@@ -273,6 +295,7 @@ go-connect/
 │   ├── crypto/                # X25519 handshake + AES-256-GCM encryption
 │   ├── protocol/              # Framing, encrypted sessions, handshake protocol
 │   ├── broker/                # Broker server, routing, client connections
+│   ├── ipsum/                 # IPsum threat intelligence feed parser and IP filter
 │   ├── logging/               # File-based security logger
 │   ├── tunnel/                # Listener, connector, and reconnect logic
 │   └── ui/                    # Colored terminal output and network interface listing

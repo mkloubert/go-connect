@@ -31,6 +31,7 @@ import (
 	"time"
 
 	pb "github.com/mkloubert/go-connect/pb"
+	"github.com/mkloubert/go-connect/pkg/ipsum"
 	"github.com/mkloubert/go-connect/pkg/logging"
 )
 
@@ -53,6 +54,9 @@ const (
 
 	// logTagRouting is the log tag for connection routing events.
 	logTagRouting = "ROUTING"
+
+	// logTagIPBlock is the log tag for IP filter events.
+	logTagIPBlock = "IPBLOCK"
 )
 
 // ServerOption configures optional Server parameters.
@@ -77,6 +81,16 @@ func WithLogger(logger *logging.Logger) ServerOption {
 	}
 }
 
+// WithIPFilter sets the IPsum threat intelligence database for the
+// broker server. When set, incoming connections are checked against
+// the database before the handshake. Blocked IPs are silently
+// disconnected and logged.
+func WithIPFilter(db *ipsum.DB) ServerOption {
+	return func(s *Server) {
+		s.ipFilter = db
+	}
+}
+
 // Server is the broker server that accepts client connections,
 // performs handshakes, and relays messages between linked peers.
 type Server struct {
@@ -90,6 +104,7 @@ type Server struct {
 	closeCh        chan struct{}
 	passphraseHash []byte
 	logger         *logging.Logger
+	ipFilter       *ipsum.DB
 }
 
 // NewServer creates a new broker Server that will listen on the given
@@ -143,6 +158,17 @@ func (s *Server) acceptLoop() {
 			default:
 				log.Printf("broker: accept error: %v", err)
 				continue
+			}
+		}
+
+		// Check IP against the IPsum blacklist before any protocol work.
+		if s.ipFilter != nil {
+			if ip, _, err := net.SplitHostPort(conn.RemoteAddr().String()); err == nil {
+				if blocked, count := s.ipFilter.IsBlocked(ip); blocked {
+					s.logBlockedIP(conn.RemoteAddr().String(), count)
+					conn.Close()
+					continue
+				}
 			}
 		}
 
@@ -442,6 +468,17 @@ func (s *Server) logInvalidConnectionID(client *ClientConn, connectionID string)
 
 	_ = s.logger.Warn(logTagRouting,
 		fmt.Sprintf("invalid connection ID %q from %s", connectionID, remote))
+}
+
+// logBlockedIP logs a connection that was rejected by the IPsum IP filter.
+// The remote address (IP:port) and the blacklist count are logged.
+func (s *Server) logBlockedIP(remoteAddr string, count int) {
+	if s.logger == nil {
+		return
+	}
+
+	_ = s.logger.Warn(logTagIPBlock,
+		fmt.Sprintf("blocked connection from %s (ipsum count=%d)", remoteAddr, count))
 }
 
 // Address returns the actual network address the server is listening

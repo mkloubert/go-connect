@@ -21,13 +21,17 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
+	"time"
 
 	"github.com/mkloubert/go-connect/pkg/broker"
+	"github.com/mkloubert/go-connect/pkg/ipsum"
 	"github.com/mkloubert/go-connect/pkg/logging"
 	"github.com/mkloubert/go-connect/pkg/ui"
 	"github.com/spf13/cobra"
@@ -60,10 +64,49 @@ func NewBrokerCommand() *cobra.Command {
 				return fmt.Errorf("failed to create logger: %w", err)
 			}
 
-			srv := broker.NewServer(address,
+			doNotBlockIPs, _ := cmd.Flags().GetBool("do-not-block-ips")
+			if !doNotBlockIPs && os.Getenv("GO_CONNECT_DO_NOT_BLOCK_IPS") == "1" {
+				doNotBlockIPs = true
+			}
+
+			opts := []broker.ServerOption{
 				broker.WithPassphrase(passphrase),
 				broker.WithLogger(logger),
-			)
+			}
+
+			if doNotBlockIPs {
+				out.Warning("IP blocking is disabled.")
+			} else {
+				ipsumURL := strings.TrimSpace(os.Getenv("GO_CONNECT_IPSUM_SOURCE"))
+				if ipsumURL == "" {
+					ipsumURL = ipsum.DefaultURL
+				}
+
+				if _, statErr := os.Stat(ipsum.DefaultFilePath); os.IsNotExist(statErr) {
+					out.Info("Downloading IPsum threat intelligence feed...")
+					ipCtx, ipCancel := context.WithTimeout(context.Background(), 30*time.Second)
+					dlErr := ipsum.DownloadToFile(ipCtx, ipsumURL, ipsum.DefaultFilePath)
+					ipCancel()
+					if dlErr != nil {
+						out.Error(fmt.Sprintf("Failed to download IPsum feed: %v", dlErr))
+						return fmt.Errorf("ipsum feed required but unavailable: %w", dlErr)
+					}
+					out.Success("IPsum feed downloaded to " + ipsum.DefaultFilePath)
+				}
+
+				ipFilter := ipsum.NewDB(ipsum.DefaultMinCount)
+				warn := func(lineNum int, line string) {
+					out.Warning(fmt.Sprintf("IPsum line %d: unparseable: %s", lineNum, line))
+				}
+				if err := ipFilter.LoadFromFile(ipsum.DefaultFilePath, warn); err != nil {
+					out.Error(fmt.Sprintf("Failed to load IPsum feed: %v", err))
+					return fmt.Errorf("ipsum feed required but unavailable: %w", err)
+				}
+				out.Success(fmt.Sprintf("IPsum loaded: %d IPs blocked (threshold >= %d)", ipFilter.Len(), ipsum.DefaultMinCount))
+				opts = append(opts, broker.WithIPFilter(ipFilter))
+			}
+
+			srv := broker.NewServer(address, opts...)
 
 			if err := srv.Start(); err != nil {
 				out.Error(fmt.Sprintf("Failed to start broker on %s", address))
@@ -104,6 +147,7 @@ func NewBrokerCommand() *cobra.Command {
 
 	cmd.Flags().String("bind-to", "0.0.0.0:1781", "address to listen on (host:port, :port, or host)")
 	cmd.Flags().String("passphrase", "", "passphrase for client authentication (overrides GO_CONNECT_PASSPHRASE env var)")
+	cmd.Flags().Bool("do-not-block-ips", false, "disable IPsum IP blocking (overrides GO_CONNECT_DO_NOT_BLOCK_IPS env var)")
 
 	return cmd
 }
