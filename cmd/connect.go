@@ -21,12 +21,14 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/signal"
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/mkloubert/go-connect/pkg/tunnel"
 	"github.com/spf13/cobra"
@@ -43,6 +45,9 @@ func NewConnectCommand() *cobra.Command {
 		Long:    "Connects to a listener through the broker and exposes the remote service on a local port",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			out := uiFromCmd(cmd)
+			cfg := reconnectConfigFromCmd(cmd)
+
 			brokerFlag, _ := cmd.Flags().GetString("broker")
 			brokerAddr := parseBrokerAddress(brokerFlag)
 
@@ -52,6 +57,8 @@ func NewConnectCommand() *cobra.Command {
 				connectionID = strings.TrimSpace(os.Getenv("GO_CONNECT_ID"))
 			}
 			if connectionID == "" {
+				out.Error("Connection ID is required")
+				out.Hint("Provide --id flag or set GO_CONNECT_ID environment variable.")
 				return fmt.Errorf("--id flag or GO_CONNECT_ID environment variable is required")
 			}
 
@@ -63,25 +70,92 @@ func NewConnectCommand() *cobra.Command {
 				passphrase = os.Getenv("GO_CONNECT_PASSPHRASE")
 			}
 
-			connector := tunnel.NewConnector(brokerAddr, connectionID, localPort, passphrase)
-			if err := connector.Start(); err != nil {
-				return fmt.Errorf("failed to start connector: %w", err)
-			}
-
-			fmt.Printf("Connected to listener %s via broker %s\n", connectionID, brokerAddr)
-			fmt.Printf("Local service available on port %s\n", localPort)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
 
 			sigCh := make(chan os.Signal, 1)
 			signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+			go func() {
+				<-sigCh
+				out.BlankLine()
+				out.Info("Shutting down connector...")
+				cancel()
+			}()
 
-			select {
-			case <-sigCh:
-				fmt.Println("\nShutting down connector...")
-			case <-connector.Done():
-				fmt.Println("Connector disconnected.")
+			var connector *tunnel.Connector
+			firstConnect := true
+
+			err := tunnel.RunWithReconnect(ctx, cfg,
+				func(event tunnel.ReconnectEvent) {
+					if event.Connected {
+						out.Success("Re-established connection to broker")
+						out.Success("Encryption re-negotiated")
+						out.Success(fmt.Sprintf("Re-linked to listener %s", connectionID))
+						return
+					}
+					if event.Attempt == 1 {
+						out.Warning("Connection to broker lost")
+						out.BlankLine()
+						out.Info("Reconnecting...")
+					}
+					retryLabel := fmt.Sprintf("%d", event.MaxRetries)
+					if event.MaxRetries == -1 {
+						retryLabel = "\u221e"
+					}
+					out.Info(fmt.Sprintf("  Attempt %d/%s ... failed (waiting %s)",
+						event.Attempt, retryLabel, event.Delay.Round(time.Millisecond)))
+				},
+				func() error {
+					connector = tunnel.NewConnector(brokerAddr, connectionID, localPort, passphrase)
+					if err := connector.Start(); err != nil {
+						return err
+					}
+					if firstConnect {
+						out.Success(fmt.Sprintf("Connected to broker at %s", brokerAddr))
+						out.Success("Encryption established (X25519 + AES-256-GCM)")
+						out.Success(fmt.Sprintf("Linked to listener %s", connectionID))
+						out.BlankLine()
+						out.Info(fmt.Sprintf("Local service available on 127.0.0.1:%s", localPort))
+						firstConnect = false
+					}
+					return nil
+				},
+				func() <-chan struct{} {
+					if connector != nil {
+						return connector.Done()
+					}
+					ch := make(chan struct{})
+					close(ch)
+					return ch
+				},
+				func() {
+					if connector != nil {
+						connector.Close()
+						connector = nil
+					}
+				},
+			)
+
+			if err != nil {
+				if ctx.Err() != nil {
+					return nil // User cancelled via Ctrl+C
+				}
+				errMsg := err.Error()
+				if strings.Contains(errMsg, "no listener registered") {
+					out.Error(fmt.Sprintf("No listener found for ID %q", connectionID))
+					out.Hint("The listener may not have started yet, the ID may be incorrect, or the listener disconnected.")
+					out.Hint(fmt.Sprintf("Run \"go-connect listen -p <port> -b %s\" on the remote machine first.", brokerAddr))
+				} else if strings.Contains(errMsg, "connection refused") {
+					out.Error(fmt.Sprintf("Cannot reach broker at %s", brokerAddr))
+					out.Hint(fmt.Sprintf("Is the broker running? Start it with: go-connect broker --bind-to=%s", brokerAddr))
+				} else if strings.Contains(errMsg, "passphrase mismatch") || strings.Contains(errMsg, "EOF") {
+					out.Error("Authentication failed")
+					out.Hint("The passphrase does not match. Check --passphrase or GO_CONNECT_PASSPHRASE.")
+				} else {
+					out.Error(fmt.Sprintf("Failed to connect: %s", errMsg))
+				}
+				return fmt.Errorf("failed to start connector: %w", err)
 			}
-
-			connector.Close()
 
 			return nil
 		},

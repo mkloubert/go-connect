@@ -42,6 +42,11 @@ func NewAppContext() *AppContext {
 		},
 	}
 
+	rootCmd.PersistentFlags().BoolP("verbose", "v", false, "enable verbose output with debug details")
+	rootCmd.PersistentFlags().BoolP("quiet", "q", false, "suppress all output except errors and essential info")
+	rootCmd.PersistentFlags().Bool("no-color", false, "disable colored output (also respects NO_COLOR env var)")
+	rootCmd.PersistentFlags().Int("max-retries", 10, "max reconnect attempts (-1=infinite, 0=disabled)")
+
 	rootCmd.AddCommand(
 		cmd.NewBrokerCommand(),
 		cmd.NewListenCommand(),

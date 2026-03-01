@@ -21,12 +21,14 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/signal"
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/mkloubert/go-connect/pkg/tunnel"
@@ -44,6 +46,9 @@ func NewListenCommand() *cobra.Command {
 		Long:    "Connects to the broker and registers as a listener, forwarding traffic to a local service",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			out := uiFromCmd(cmd)
+			cfg := reconnectConfigFromCmd(cmd)
+
 			port, _ := cmd.Flags().GetInt("port")
 			localPort := strconv.Itoa(port)
 
@@ -64,26 +69,99 @@ func NewListenCommand() *cobra.Command {
 				passphrase = os.Getenv("GO_CONNECT_PASSPHRASE")
 			}
 
-			listener := tunnel.NewListener(localPort, brokerAddr, connectionID, passphrase)
-			if err := listener.Start(); err != nil {
-				return fmt.Errorf("failed to start listener: %w", err)
-			}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
 
-			fmt.Printf("Connection ID: %s\n", connectionID)
-			fmt.Printf("Listening for connections on local port %s via broker %s\n", localPort, brokerAddr)
-
-			// Wait for signal or disconnect.
+			// Handle OS signals to trigger graceful shutdown.
 			sigCh := make(chan os.Signal, 1)
 			signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+			go func() {
+				<-sigCh
+				out.BlankLine()
+				out.Info("Shutting down listener...")
+				cancel()
+			}()
 
-			select {
-			case <-sigCh:
-				fmt.Println("\nShutting down listener...")
-			case <-listener.Done():
-				fmt.Println("Listener disconnected.")
+			var listener *tunnel.Listener
+			firstConnect := true
+
+			err := tunnel.RunWithReconnect(ctx, cfg,
+				func(event tunnel.ReconnectEvent) {
+					if event.Connected {
+						out.Success("Re-established connection to broker")
+						out.Success("Encryption re-negotiated")
+						out.Success(fmt.Sprintf("Re-registered as listener (Connection ID: %s)", connectionID))
+						return
+					}
+					if event.Attempt == 1 {
+						out.Warning("Connection to broker lost")
+						out.BlankLine()
+						out.Info("Reconnecting...")
+					}
+					retryLabel := fmt.Sprintf("%d", event.MaxRetries)
+					if event.MaxRetries == -1 {
+						retryLabel = "\u221e"
+					}
+					out.Info(fmt.Sprintf("  Attempt %d/%s ... failed (waiting %s)",
+						event.Attempt, retryLabel, event.Delay.Round(time.Millisecond)))
+				},
+				func() error {
+					listener = tunnel.NewListener(localPort, brokerAddr, connectionID, passphrase)
+					if err := listener.Start(); err != nil {
+						return err
+					}
+					if firstConnect {
+						out.Success(fmt.Sprintf("Connected to broker at %s", brokerAddr))
+						out.Success("Encryption established (X25519 + AES-256-GCM)")
+						out.BlankLine()
+
+						if out.IsQuiet() {
+							out.Raw(connectionID)
+						} else {
+							out.Info(fmt.Sprintf("Connection ID: %s", connectionID))
+							out.BlankLine()
+							out.Info("Share this ID with the connecting client.")
+							out.Info(fmt.Sprintf("Listening for connections on local port %s...", localPort))
+						}
+						firstConnect = false
+					}
+					return nil
+				},
+				func() <-chan struct{} {
+					if listener != nil {
+						return listener.Done()
+					}
+					ch := make(chan struct{})
+					close(ch)
+					return ch
+				},
+				func() {
+					if listener != nil {
+						listener.Close()
+						listener = nil
+					}
+				},
+			)
+
+			if err != nil {
+				if ctx.Err() != nil {
+					return nil // User cancelled via Ctrl+C
+				}
+				errMsg := err.Error()
+				if strings.Contains(errMsg, "connection refused") {
+					out.Error(fmt.Sprintf("Cannot reach broker at %s", brokerAddr))
+					out.Hint(fmt.Sprintf("Is the broker running? Start it with: go-connect broker --bind-to=%s", brokerAddr))
+				} else if strings.Contains(errMsg, "registration rejected") {
+					out.Error("Registration rejected by broker")
+					out.Hint("The connection ID may already be in use. Try a different --id.")
+				} else if strings.Contains(errMsg, "passphrase mismatch") || strings.Contains(errMsg, "EOF") {
+					out.Error("Authentication failed")
+					out.Hint("The passphrase does not match. Check --passphrase or GO_CONNECT_PASSPHRASE.")
+				} else {
+					out.Error(fmt.Sprintf("Failed to connect: %s", errMsg))
+				}
+				return fmt.Errorf("failed to start listener: %w", err)
 			}
-
-			listener.Close()
 
 			return nil
 		},

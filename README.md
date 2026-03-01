@@ -33,17 +33,17 @@ Download a pre-built binary from the [Releases](https://github.com/mkloubert/go-
 
 Binaries are available for:
 
-| OS           | Architectures                                                              |
-| ------------ | -------------------------------------------------------------------------- |
+| OS           | Architectures                                                                                     |
+| ------------ | ------------------------------------------------------------------------------------------------- |
 | Linux        | amd64, arm64, armv7, 386, loong64, mips, mipsle, mips64, mips64le, ppc64, ppc64le, riscv64, s390x |
-| macOS        | amd64, arm64 (Apple Silicon)                                               |
-| Windows      | amd64, arm64, 386                                                          |
-| FreeBSD      | amd64, arm64, 386, armv7                                                   |
-| OpenBSD      | amd64, arm64, 386, armv7                                                   |
-| NetBSD       | amd64, arm64, 386                                                          |
-| DragonflyBSD | amd64                                                                      |
-| Solaris      | amd64                                                                      |
-| AIX          | ppc64                                                                      |
+| macOS        | amd64, arm64 (Apple Silicon)                                                                      |
+| Windows      | amd64, arm64, 386                                                                                 |
+| FreeBSD      | amd64, arm64, 386, armv7                                                                          |
+| OpenBSD      | amd64, arm64, 386, armv7                                                                          |
+| NetBSD       | amd64, arm64, 386                                                                                 |
+| DragonflyBSD | amd64                                                                                             |
+| Solaris      | amd64                                                                                             |
+| AIX          | ppc64                                                                                             |
 
 Each release includes SHA-256 checksums in `checksums.txt`.
 
@@ -165,14 +165,57 @@ Now connect to `localhost:60000` on Client B to access the service on Client A.
 | `connect` | `c`   | `--id`/`-i`    | `--broker`/`-b`, `--port`/`-p`, `--passphrase` |
 | `version` |       |                |                                                |
 
+### Global flags
+
+These flags are available on all commands:
+
+| Flag            | Short | Default | Description                                                                     |
+| --------------- | ----- | ------- | ------------------------------------------------------------------------------- |
+| `--verbose`     | `-v`  | `false` | Show technical details (handshake timing, stream IDs, debug info)               |
+| `--quiet`       | `-q`  | `false` | Only errors and essential info (connection ID for listener)                     |
+| `--no-color`    |       | `false` | Disable colored output (automatic when piped; also respects `NO_COLOR` env var) |
+| `--max-retries` |       | `10`    | Max reconnect attempts (`-1` = infinite, `0` = disabled)                        |
+
+### Output modes
+
+**Normal mode** (default): Colored output with status messages, connection info, and hints on errors.
+
+**Verbose mode** (`--verbose`): Adds debug information like handshake timing, heartbeat sequences, and stream IDs.
+
+**Quiet mode** (`--quiet`): Minimal output. The `listen` command only prints the connection ID -- useful for scripting:
+
+```bash
+ID=$(./go-connect listen -p 5900 -q &)
+```
+
+### Auto-reconnect
+
+By default, `listen` and `connect` automatically reconnect when the broker connection is lost.
+
+Reconnect uses exponential backoff: 1s, 2s, 4s, 8s, 16s, 30s (capped), with ±25% jitter.
+
+```bash
+# Disable reconnect (exit on disconnect):
+./go-connect listen -p 5900 --max-retries=0
+
+# Infinite reconnect attempts:
+./go-connect listen -p 5900 --max-retries=-1
+```
+
+Press `Ctrl+C` during reconnect to cancel immediately.
+
 ### Environment variables
 
 All commands support environment variables as alternatives to flags:
 
-| Variable                | Commands                | Purpose                       |
-| ----------------------- | ----------------------- | ----------------------------- |
-| `GO_CONNECT_PASSPHRASE` | broker, listen, connect | Passphrase for authentication |
-| `GO_CONNECT_ID`         | listen, connect         | Connection ID                 |
+| Variable                 | Commands                | Purpose                              |
+| ------------------------ | ----------------------- | ------------------------------------ |
+| `GO_CONNECT_PASSPHRASE`  | broker, listen, connect | Passphrase for authentication        |
+| `GO_CONNECT_ID`          | listen, connect         | Connection ID                        |
+| `GO_CONNECT_VERBOSE`     | all                     | Set to `1` to enable verbose mode    |
+| `GO_CONNECT_QUIET`       | all                     | Set to `1` to enable quiet mode      |
+| `GO_CONNECT_MAX_RETRIES` | listen, connect         | Max reconnect attempts               |
+| `NO_COLOR`               | all                     | Set to `1` to disable colored output |
 
 ```bash
 export GO_CONNECT_PASSPHRASE="my-secret"
@@ -209,7 +252,8 @@ go-connect/
 │   ├── crypto/                # X25519 handshake + AES-256-GCM encryption
 │   ├── protocol/              # Framing, encrypted sessions, handshake protocol
 │   ├── broker/                # Broker server, routing, client connections
-│   └── tunnel/                # Listener and connector client logic
+│   ├── tunnel/                # Listener, connector, and reconnect logic
+│   └── ui/                    # Colored terminal output and network interface listing
 ├── pb/                        # Generated protobuf code
 ├── proto/                     # Protobuf definitions
 └── test/                      # Integration tests

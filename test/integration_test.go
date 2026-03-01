@@ -21,10 +21,12 @@
 package test
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -377,5 +379,101 @@ func TestEndToEnd_WrongPassphrase_Rejected(t *testing.T) {
 	if err == nil {
 		listener.Close()
 		t.Fatal("expected listener.Start() to fail with wrong passphrase, got nil")
+	}
+}
+
+// TestEndToEnd_ReconnectAfterBrokerRestart tests that RunWithReconnect
+// retries the connection after the broker restarts. It starts a broker,
+// connects a listener via RunWithReconnect, stops the broker to trigger
+// disconnect, starts a new broker on the same address, and verifies the
+// listener reconnects successfully.
+func TestEndToEnd_ReconnectAfterBrokerRestart(t *testing.T) {
+	echoLn, echoPort := startEchoServer(t)
+	defer echoLn.Close()
+
+	// Start broker on a fixed port.
+	srv := broker.NewServer("127.0.0.1:0")
+	if err := srv.Start(); err != nil {
+		t.Fatalf("failed to start broker: %v", err)
+	}
+	brokerAddr := srv.Address()
+	connectionID := uuid.New().String()
+
+	cfg := tunnel.ReconnectConfig{
+		MaxRetries:   5,
+		InitialDelay: 100 * time.Millisecond,
+		MaxDelay:     500 * time.Millisecond,
+		Factor:       2.0,
+		Jitter:       0,
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	var listener *tunnel.Listener
+	connectCount := atomic.Int32{}
+	reconnected := make(chan struct{}, 1)
+
+	go func() {
+		_ = tunnel.RunWithReconnect(ctx, cfg,
+			func(event tunnel.ReconnectEvent) {
+				if event.Connected {
+					select {
+					case reconnected <- struct{}{}:
+					default:
+					}
+				}
+			},
+			func() error {
+				listener = tunnel.NewListener(echoPort, brokerAddr, connectionID, "")
+				err := listener.Start()
+				if err == nil {
+					connectCount.Add(1)
+				}
+				return err
+			},
+			func() <-chan struct{} {
+				if listener != nil {
+					return listener.Done()
+				}
+				ch := make(chan struct{})
+				close(ch)
+				return ch
+			},
+			func() {
+				if listener != nil {
+					listener.Close()
+					listener = nil
+				}
+			},
+		)
+	}()
+
+	// Wait for initial connection.
+	time.Sleep(300 * time.Millisecond)
+	if connectCount.Load() != 1 {
+		t.Fatalf("expected 1 initial connection, got %d", connectCount.Load())
+	}
+
+	// Stop broker to trigger disconnect.
+	srv.Stop()
+
+	// Start new broker on the SAME address.
+	srv2 := broker.NewServer(brokerAddr)
+	if err := srv2.Start(); err != nil {
+		t.Fatalf("failed to restart broker: %v", err)
+	}
+	defer srv2.Stop()
+
+	// Wait for reconnect.
+	select {
+	case <-reconnected:
+		// Success!
+	case <-time.After(10 * time.Second):
+		t.Fatal("timeout waiting for reconnect")
+	}
+
+	if connectCount.Load() < 2 {
+		t.Errorf("expected at least 2 connections (initial + reconnect), got %d", connectCount.Load())
 	}
 }

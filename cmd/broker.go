@@ -22,11 +22,13 @@ package cmd
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"os/signal"
 	"syscall"
 
 	"github.com/mkloubert/go-connect/pkg/broker"
+	"github.com/mkloubert/go-connect/pkg/ui"
 	"github.com/spf13/cobra"
 )
 
@@ -41,6 +43,8 @@ func NewBrokerCommand() *cobra.Command {
 		Long:    "Starts the broker (Vermittler) that relays encrypted connections between clients",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			out := uiFromCmd(cmd)
+
 			bindFlag, _ := cmd.Flags().GetString("bind-to")
 			address := parseBindAddress(bindFlag)
 
@@ -52,16 +56,36 @@ func NewBrokerCommand() *cobra.Command {
 			srv := broker.NewServer(address, broker.WithPassphrase(passphrase))
 
 			if err := srv.Start(); err != nil {
+				out.Error(fmt.Sprintf("Failed to start broker on %s", address))
+				out.Hint("Check that the port is not already in use and you have permission to bind to this address.")
 				return fmt.Errorf("failed to start broker: %w", err)
 			}
 
-			fmt.Printf("Broker listening on %s\n", srv.Address())
+			out.Success(fmt.Sprintf("Broker listening on %s", srv.Address()))
+
+			host, port, err := net.SplitHostPort(srv.Address())
+			if err == nil && (host == "0.0.0.0" || host == "::") {
+				out.BlankLine()
+				out.Info("Available addresses for clients:")
+				for _, addr := range ui.ListAddresses(port) {
+					out.Bullet(fmt.Sprintf("%-24s (%s)", addr.Display(), addr.Label()))
+				}
+			} else if err == nil {
+				out.BlankLine()
+				out.Info("Clients can connect with:")
+				out.Info(fmt.Sprintf("  go-connect listen  -b %s -p <port>", srv.Address()))
+				out.Info(fmt.Sprintf("  go-connect connect -b %s -i <id> -p <port>", srv.Address()))
+			}
+
+			out.BlankLine()
+			out.Info("Waiting for connections...")
 
 			sigCh := make(chan os.Signal, 1)
 			signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 			<-sigCh
 
-			fmt.Println("\nShutting down broker...")
+			out.BlankLine()
+			out.Info("Shutting down broker...")
 			srv.Stop()
 
 			return nil

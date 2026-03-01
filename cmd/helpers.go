@@ -21,8 +21,14 @@
 package cmd
 
 import (
+	"fmt"
 	"net"
+	"os"
 	"strings"
+
+	"github.com/mkloubert/go-connect/pkg/tunnel"
+	"github.com/mkloubert/go-connect/pkg/ui"
+	"github.com/spf13/cobra"
 )
 
 const defaultPort = "1781"
@@ -72,4 +78,40 @@ func parseBrokerAddress(addr string) string {
 // Default host: 0.0.0.0, default port: 1781.
 func parseBindAddress(addr string) string {
 	return parseAddress(addr, "0.0.0.0")
+}
+
+// uiFromCmd creates a UI instance from the global persistent flags
+// on the given cobra command.
+func uiFromCmd(cmd *cobra.Command) *ui.UI {
+	verbose, _ := cmd.Flags().GetBool("verbose")
+	quiet, _ := cmd.Flags().GetBool("quiet")
+	noColor, _ := cmd.Flags().GetBool("no-color")
+
+	if os.Getenv("GO_CONNECT_VERBOSE") == "1" && !verbose {
+		verbose = true
+	}
+	if os.Getenv("GO_CONNECT_QUIET") == "1" && !quiet {
+		quiet = true
+	}
+
+	useColor := !noColor && os.Getenv("NO_COLOR") == ""
+	return ui.NewDefaultUI(useColor, verbose, quiet)
+}
+
+// reconnectConfigFromCmd creates a ReconnectConfig from the global flags.
+func reconnectConfigFromCmd(cmd *cobra.Command) tunnel.ReconnectConfig {
+	maxRetries, _ := cmd.Flags().GetInt("max-retries")
+
+	if envVal := os.Getenv("GO_CONNECT_MAX_RETRIES"); envVal != "" {
+		if !cmd.Flags().Changed("max-retries") {
+			var n int
+			if _, err := fmt.Sscanf(envVal, "%d", &n); err == nil {
+				maxRetries = n
+			}
+		}
+	}
+
+	cfg := tunnel.DefaultReconnectConfig()
+	cfg.MaxRetries = maxRetries
+	return cfg
 }
