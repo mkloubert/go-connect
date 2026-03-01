@@ -31,6 +31,7 @@ import (
 	"time"
 
 	pb "github.com/mkloubert/go-connect/pb"
+	"github.com/mkloubert/go-connect/pkg/geoblock"
 	"github.com/mkloubert/go-connect/pkg/ipsum"
 	"github.com/mkloubert/go-connect/pkg/logging"
 )
@@ -57,6 +58,9 @@ const (
 
 	// logTagIPBlock is the log tag for IP filter events.
 	logTagIPBlock = "IPBLOCK"
+
+	// logTagGeoBlock is the log tag for geo-block filter events.
+	logTagGeoBlock = "GEOBLOCK"
 )
 
 // ServerOption configures optional Server parameters.
@@ -91,6 +95,15 @@ func WithIPFilter(db *ipsum.DB) ServerOption {
 	}
 }
 
+// WithGeoFilter sets the GeoLite2 country blocking database for the
+// broker server. When set, incoming connections are checked against
+// the blocked country list before the handshake.
+func WithGeoFilter(db *geoblock.DB) ServerOption {
+	return func(s *Server) {
+		s.geoFilter = db
+	}
+}
+
 // Server is the broker server that accepts client connections,
 // performs handshakes, and relays messages between linked peers.
 type Server struct {
@@ -105,6 +118,7 @@ type Server struct {
 	passphraseHash []byte
 	logger         *logging.Logger
 	ipFilter       *ipsum.DB
+	geoFilter      *geoblock.DB
 }
 
 // NewServer creates a new broker Server that will listen on the given
@@ -166,6 +180,17 @@ func (s *Server) acceptLoop() {
 			if ip, _, err := net.SplitHostPort(conn.RemoteAddr().String()); err == nil {
 				if blocked, count := s.ipFilter.IsBlocked(ip); blocked {
 					s.logBlockedIP(conn.RemoteAddr().String(), count)
+					conn.Close()
+					continue
+				}
+			}
+		}
+
+		// Check IP against the geo-block country filter before any protocol work.
+		if s.geoFilter != nil {
+			if ip, _, err := net.SplitHostPort(conn.RemoteAddr().String()); err == nil {
+				if blocked, countryCode := s.geoFilter.IsBlocked(ip); blocked {
+					s.logGeoBlockedIP(conn.RemoteAddr().String(), countryCode)
 					conn.Close()
 					continue
 				}
@@ -479,6 +504,17 @@ func (s *Server) logBlockedIP(remoteAddr string, count int) {
 
 	_ = s.logger.Warn(logTagIPBlock,
 		fmt.Sprintf("blocked connection from %s (ipsum count=%d)", remoteAddr, count))
+}
+
+// logGeoBlockedIP logs a connection that was rejected by the geo-block
+// country filter. The remote address and the country code are logged.
+func (s *Server) logGeoBlockedIP(remoteAddr, countryCode string) {
+	if s.logger == nil {
+		return
+	}
+
+	_ = s.logger.Warn(logTagGeoBlock,
+		fmt.Sprintf("blocked connection from %s (country=%s)", remoteAddr, countryCode))
 }
 
 // Address returns the actual network address the server is listening

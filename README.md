@@ -158,12 +158,12 @@ Now connect to `localhost:60000` on Client B to access the service on Client A.
 
 ### Command reference
 
-| Command   | Alias | Required flags | Optional flags                                 |
-| --------- | ----- | -------------- | ---------------------------------------------- |
-| `broker`  | `b`   |                | `--bind-to`, `--passphrase`, `--enable-ipsum`  |
-| `connect` | `c`   | `--id`/`-i`    | `--broker`/`-b`, `--port`/`-p`, `--passphrase` |
-| `listen`  | `l`   | `--port`/`-p`  | `--broker`/`-b`, `--id`/`-i`, `--passphrase`   |
-| `version` |       |                |                                                |
+| Command   | Alias | Required flags | Optional flags                                                                               |
+| --------- | ----- | -------------- | -------------------------------------------------------------------------------------------- |
+| `broker`  | `b`   |                | `--bind-to`, `--passphrase`, `--enable-ipsum`, `--enable-geo-blocker`, `--blocked-countries` |
+| `connect` | `c`   | `--id`/`-i`    | `--broker`/`-b`, `--port`/`-p`, `--passphrase`                                               |
+| `listen`  | `l`   | `--port`/`-p`  | `--broker`/`-b`, `--id`/`-i`, `--passphrase`                                                 |
+| `version` |       |                |                                                                                              |
 
 ### Global flags
 
@@ -208,16 +208,19 @@ Press `Ctrl+C` during reconnect to cancel immediately.
 
 All commands support environment variables as alternatives to flags:
 
-| Variable                  | Commands                | Purpose                                |
-| ------------------------- | ----------------------- | -------------------------------------- |
-| `GO_CONNECT_ENABLE_IPSUM` | broker                  | Set to `1` to enable IPsum IP blocking |
-| `GO_CONNECT_ID`           | listen, connect         | Connection ID                          |
-| `GO_CONNECT_IPSUM_SOURCE` | broker                  | Custom URL for the IPsum feed          |
-| `GO_CONNECT_MAX_RETRIES`  | listen, connect         | Max reconnect attempts                 |
-| `GO_CONNECT_PASSPHRASE`   | broker, listen, connect | Passphrase for authentication          |
-| `GO_CONNECT_QUIET`        | all                     | Set to `1` to enable quiet mode        |
-| `GO_CONNECT_VERBOSE`      | all                     | Set to `1` to enable verbose mode      |
-| `NO_COLOR`                | all                     | Set to `1` to disable colored output   |
+| Variable                        | Commands                | Purpose                                                                    |
+| ------------------------------- | ----------------------- | -------------------------------------------------------------------------- |
+| `GO_CONNECT_BLOCKED_COUNTRIES`  | broker                  | Comma-separated ISO country codes to block                                 |
+| `GO_CONNECT_ENABLE_GEO_BLOCKER` | broker                  | Set to `1` to enable GeoLite2 country blocking                             |
+| `GO_CONNECT_ENABLE_IPSUM`       | broker                  | Set to `1` to enable IPsum IP blocking                                     |
+| `GO_CONNECT_GEO_DB`             | broker                  | Path to GeoLite2 mmdb file (default: `GeoLite2.mmdb` in working directory) |
+| `GO_CONNECT_ID`                 | listen, connect         | Connection ID                                                              |
+| `GO_CONNECT_IPSUM_SOURCE`       | broker                  | Custom URL for the IPsum feed                                              |
+| `GO_CONNECT_MAX_RETRIES`        | listen, connect         | Max reconnect attempts                                                     |
+| `GO_CONNECT_PASSPHRASE`         | broker, listen, connect | Passphrase for authentication                                              |
+| `GO_CONNECT_QUIET`              | all                     | Set to `1` to enable quiet mode                                            |
+| `GO_CONNECT_VERBOSE`            | all                     | Set to `1` to enable verbose mode                                          |
+| `NO_COLOR`                      | all                     | Set to `1` to disable colored output                                       |
 
 ```bash
 export GO_CONNECT_PASSPHRASE="my-secret"
@@ -244,6 +247,7 @@ export GO_CONNECT_ID="327ac625-3b0c-4bd7-ab1b-bb9d733774ae"
 - **Heartbeat:** 15s interval, 45s timeout for disconnect detection
 - **Silent Rejection:** Wrong passphrase causes silent connection close (no information leakage)
 - **IP Threat Filter:** Optional blocking of known malicious IPs via [IPsum](https://github.com/stamparm/ipsum) threat intelligence (`--enable-ipsum`)
+- **Geo-Blocking:** Optional country-based IP blocking via MaxMind [GeoLite2-City](https://dev.maxmind.com/geoip/geolite2-free-geolocation-data) database (`--enable-geo-blocker`)
 - **Security Logging:** File-based audit log for suspicious activity (see below)
 
 ### IPsum threat intelligence filter
@@ -266,6 +270,25 @@ Unparseable lines in the feed are logged as warnings to the console (not to the 
 
 Only IPs meeting the threshold are stored in memory. IPv6 addresses are not filtered (IPsum covers IPv4 only).
 
+### Geo-blocking (country filter)
+
+The broker can block connections from specific countries using MaxMind's [GeoLite2-City](https://dev.maxmind.com/geoip/geolite2-free-geolocation-data) database. This feature is **disabled by default** and must be enabled with `--enable-geo-blocker` or `GO_CONNECT_ENABLE_GEO_BLOCKER=1`.
+
+When enabled, the broker reads `GeoLite2.mmdb` from the current working directory. A custom path can be set with `GO_CONNECT_GEO_DB` (relative paths are resolved from the working directory). The file is **not** downloaded automatically -- you must obtain it from MaxMind.
+
+Blocked countries are specified as a comma-separated list of ISO 3166-1 alpha-2 codes via `--blocked-countries` or `GO_CONNECT_BLOCKED_COUNTRIES`. Codes are trimmed and matched case-insensitively.
+
+Example:
+
+```bash
+# Block connections from Russia, China, and North Korea
+./go-connect broker --enable-geo-blocker --blocked-countries="RU,CN,KP"
+```
+
+Connections from blocked countries are rejected before the handshake, with no protocol overhead. Both IPv4 and IPv6 addresses are checked.
+
+Blocked connections are logged with the `GEOBLOCK` tag in the security log.
+
 ### Security logging
 
 The broker writes security-relevant events to log files in the `logs/` directory (relative to the working directory). Log files use the date-based naming pattern `YYYYMMDD.logs.txt`.
@@ -278,12 +301,13 @@ Each log entry has the format:
 
 The following events are logged:
 
-| Event                 | Tag       | What is logged                                                                                                                    |
-| --------------------- | --------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| Blocked IP            | `IPBLOCK` | Remote IP, port, and IPsum blacklist count. Connection rejected before handshake.                                                 |
-| Invalid auth payload  | `AUTH`    | Raw content as Base64 (max 256 bytes), remote IP and port. Detects bots trying services like SSH or HTTP against the broker port. |
-| Invalid connection ID | `ROUTING` | Remote IP, port, and the submitted connection ID value.                                                                           |
-| Wrong passphrase      | `AUTH`    | Remote IP and port only. The passphrase value is never logged.                                                                    |
+| Event                 | Tag        | What is logged                                                                                                                    |
+| --------------------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| Blocked IP            | `IPBLOCK`  | Remote IP, port, and IPsum blacklist count. Connection rejected before handshake.                                                 |
+| Blocked country       | `GEOBLOCK` | Remote IP, port, and ISO country code. Connection rejected before handshake.                                                      |
+| Invalid auth payload  | `AUTH`     | Raw content as Base64 (max 256 bytes), remote IP and port. Detects bots trying services like SSH or HTTP against the broker port. |
+| Invalid connection ID | `ROUTING`  | Remote IP, port, and the submitted connection ID value.                                                                           |
+| Wrong passphrase      | `AUTH`     | Remote IP and port only. The passphrase value is never logged.                                                                    |
 
 The logger is memory-optimized: files are opened in append mode for each write and closed immediately after. This avoids memory issues during high volumes of connection attempts.
 
@@ -293,15 +317,16 @@ The logger is memory-optimized: files are opened in append mode for each write a
 go-connect/
 ├── main.go                    # Entry point
 ├── cmd/                       # CLI commands (broker, listen, connect, version)
+├── pb/                        # Generated protobuf code
 ├── pkg/
-│   ├── crypto/                # X25519 handshake + AES-256-GCM encryption
-│   ├── protocol/              # Framing, encrypted sessions, handshake protocol
 │   ├── broker/                # Broker server, routing, client connections
+│   ├── crypto/                # X25519 handshake + AES-256-GCM encryption
+│   ├── geoblock/              # GeoLite2 country-based IP blocking
 │   ├── ipsum/                 # IPsum threat intelligence feed parser and IP filter
 │   ├── logging/               # File-based security logger
+│   ├── protocol/              # Framing, encrypted sessions, handshake protocol
 │   ├── tunnel/                # Listener, connector, and reconnect logic
 │   └── ui/                    # Colored terminal output and network interface listing
-├── pb/                        # Generated protobuf code
 ├── proto/                     # Protobuf definitions
 └── test/                      # Integration tests
 ```
