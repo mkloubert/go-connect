@@ -28,6 +28,7 @@ import (
 	"syscall"
 
 	"github.com/mkloubert/go-connect/pkg/broker"
+	"github.com/mkloubert/go-connect/pkg/logging"
 	"github.com/mkloubert/go-connect/pkg/ui"
 	"github.com/spf13/cobra"
 )
@@ -53,7 +54,16 @@ func NewBrokerCommand() *cobra.Command {
 				passphrase = os.Getenv("GO_CONNECT_PASSPHRASE")
 			}
 
-			srv := broker.NewServer(address, broker.WithPassphrase(passphrase))
+			logger, err := logging.NewLogger("logs")
+			if err != nil {
+				out.Error("Failed to initialize security logger")
+				return fmt.Errorf("failed to create logger: %w", err)
+			}
+
+			srv := broker.NewServer(address,
+				broker.WithPassphrase(passphrase),
+				broker.WithLogger(logger),
+			)
 
 			if err := srv.Start(); err != nil {
 				out.Error(fmt.Sprintf("Failed to start broker on %s", address))

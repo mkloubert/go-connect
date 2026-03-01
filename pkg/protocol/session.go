@@ -90,25 +90,35 @@ func (s *Session) Send(env *pb.Envelope) error {
 // Receive reads a length-prefixed frame, decrypts it, and unmarshals
 // the protobuf Envelope. This method is thread-safe.
 func (s *Session) Receive() (*pb.Envelope, error) {
+	_, env, err := s.ReceiveRaw()
+	return env, err
+}
+
+// ReceiveRaw reads a length-prefixed frame, decrypts it, and unmarshals
+// the protobuf Envelope. It returns the raw decrypted bytes alongside
+// the parsed envelope. On decryption failure the encrypted frame bytes
+// are returned; on unmarshal failure the decrypted plaintext is returned.
+// This method is thread-safe.
+func (s *Session) ReceiveRaw() ([]byte, *pb.Envelope, error) {
 	s.recvMu.Lock()
 	defer s.recvMu.Unlock()
 
 	frame, err := ReadFrame(s.conn)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read encrypted frame: %w", err)
+		return nil, nil, fmt.Errorf("failed to read encrypted frame: %w", err)
 	}
 
 	plaintext, err := s.recvEnc.Decrypt(frame)
 	if err != nil {
-		return nil, fmt.Errorf("failed to decrypt frame: %w", err)
+		return frame, nil, fmt.Errorf("failed to decrypt frame: %w", err)
 	}
 
 	env := &pb.Envelope{}
 	if err := proto.Unmarshal(plaintext, env); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal envelope: %w", err)
+		return plaintext, nil, fmt.Errorf("failed to unmarshal envelope: %w", err)
 	}
 
-	return env, nil
+	return plaintext, env, nil
 }
 
 // SendCleartext marshals the given protobuf Envelope and writes it as a

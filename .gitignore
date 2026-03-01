@@ -7,3 +7,4 @@ node_modules/
 /.claude/
 /go-connect
 /go-connect.exe
+/logs/

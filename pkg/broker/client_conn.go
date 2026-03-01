@@ -71,6 +71,11 @@ func NewClientConn(conn net.Conn, router *Router) (*ClientConn, error) {
 	}, nil
 }
 
+// RemoteAddr returns the remote network address of the client.
+func (cc *ClientConn) RemoteAddr() net.Addr {
+	return cc.conn.RemoteAddr()
+}
+
 // Send sends an encrypted protobuf Envelope to the client.
 func (cc *ClientConn) Send(env *pb.Envelope) error {
 	return cc.session.Send(env)
@@ -79,6 +84,13 @@ func (cc *ClientConn) Send(env *pb.Envelope) error {
 // Receive reads and decrypts a protobuf Envelope from the client.
 func (cc *ClientConn) Receive() (*pb.Envelope, error) {
 	return cc.session.Receive()
+}
+
+// ReceiveRaw reads and decrypts a protobuf Envelope from the client,
+// returning the raw bytes alongside the parsed envelope. This is used
+// for security logging when the payload may be invalid.
+func (cc *ClientConn) ReceiveRaw() ([]byte, *pb.Envelope, error) {
+	return cc.session.ReceiveRaw()
 }
 
 // SetConnectionID sets the connection ID for this client.

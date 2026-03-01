@@ -24,10 +24,14 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"net"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	pb "github.com/mkloubert/go-connect/pb"
+	"github.com/mkloubert/go-connect/pkg/logging"
 	"github.com/mkloubert/go-connect/pkg/protocol"
 )
 
@@ -272,5 +276,183 @@ func TestServer_PassphraseAuth_EmptyDefault(t *testing.T) {
 	}
 	if !ack.GetRegisterAck().GetSuccess() {
 		t.Fatalf("RegisterAck not successful: %s", ack.GetRegisterAck().GetMessage())
+	}
+}
+
+// newTestLogger creates a Logger that writes to a temporary directory.
+// Returns the logger and the log directory path.
+func newTestLogger(t *testing.T) (*logging.Logger, string) {
+	t.Helper()
+
+	dir := filepath.Join(t.TempDir(), "logs")
+	logger, err := logging.NewLogger(dir)
+	if err != nil {
+		t.Fatalf("failed to create test logger: %v", err)
+	}
+	return logger, dir
+}
+
+// readLogContent reads all log files in the directory and returns
+// the concatenated content.
+func readLogContent(t *testing.T, dir string) string {
+	t.Helper()
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("failed to read log directory: %v", err)
+	}
+
+	var content strings.Builder
+	for _, e := range entries {
+		data, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		if err != nil {
+			t.Fatalf("failed to read log file %s: %v", e.Name(), err)
+		}
+		content.Write(data)
+	}
+	return content.String()
+}
+
+func TestServer_Log_InvalidAuthPayload(t *testing.T) {
+	logger, logDir := newTestLogger(t)
+
+	srv := NewServer("127.0.0.1:0", WithLogger(logger))
+	if err := srv.Start(); err != nil {
+		t.Fatalf("failed to start broker: %v", err)
+	}
+	defer srv.Stop()
+
+	addr := srv.Address()
+
+	// Connect and perform handshake.
+	conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
+	if err != nil {
+		t.Fatalf("failed to dial broker: %v", err)
+	}
+	defer conn.Close()
+
+	session, err := protocol.PerformHandshake(conn)
+	if err != nil {
+		t.Fatalf("handshake failed: %v", err)
+	}
+
+	// Send a Register message instead of Authenticate (invalid payload).
+	if err := session.Send(&pb.Envelope{
+		Payload: &pb.Envelope_Register{
+			Register: &pb.Register{
+				ConnectionId: "not-an-auth-message",
+			},
+		},
+	}); err != nil {
+		t.Fatalf("failed to send invalid payload: %v", err)
+	}
+
+	// Wait for the broker to process and close.
+	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	_, _ = session.Receive()
+
+	// Allow broker to write the log entry.
+	time.Sleep(100 * time.Millisecond)
+
+	content := readLogContent(t, logDir)
+	if !strings.Contains(content, "[AUTH]") {
+		t.Errorf("expected AUTH tag in log, got: %q", content)
+	}
+	if !strings.Contains(content, "[WARN]") {
+		t.Errorf("expected WARN severity in log, got: %q", content)
+	}
+	if !strings.Contains(content, "invalid auth payload from") {
+		t.Errorf("expected 'invalid auth payload from' in log, got: %q", content)
+	}
+}
+
+func TestServer_Log_PassphraseMismatch(t *testing.T) {
+	logger, logDir := newTestLogger(t)
+
+	srv := NewServer("127.0.0.1:0",
+		WithPassphrase("correct-pass"),
+		WithLogger(logger),
+	)
+	if err := srv.Start(); err != nil {
+		t.Fatalf("failed to start broker: %v", err)
+	}
+	defer srv.Stop()
+
+	addr := srv.Address()
+
+	// Perform handshake and send wrong passphrase.
+	conn, session := dialAndHandshakeWithPassphrase(t, addr, "wrong-pass")
+	defer conn.Close()
+
+	// Wait for broker to close connection.
+	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	_, _ = session.Receive()
+
+	time.Sleep(100 * time.Millisecond)
+
+	content := readLogContent(t, logDir)
+	if !strings.Contains(content, "[AUTH]") {
+		t.Errorf("expected AUTH tag in log, got: %q", content)
+	}
+	if !strings.Contains(content, "passphrase mismatch from") {
+		t.Errorf("expected 'passphrase mismatch from' in log, got: %q", content)
+	}
+	// Ensure the passphrase value is NOT logged.
+	if strings.Contains(content, "wrong-pass") {
+		t.Error("passphrase value should NOT be logged")
+	}
+}
+
+func TestServer_Log_InvalidConnectionID(t *testing.T) {
+	logger, logDir := newTestLogger(t)
+
+	srv := NewServer("127.0.0.1:0", WithLogger(logger))
+	if err := srv.Start(); err != nil {
+		t.Fatalf("failed to start broker: %v", err)
+	}
+	defer srv.Stop()
+
+	addr := srv.Address()
+
+	// Connect as connector with a non-existent connection ID.
+	conn, session := dialAndHandshake(t, addr)
+	defer conn.Close()
+
+	if err := session.Send(&pb.Envelope{
+		Payload: &pb.Envelope_ConnectRequest{
+			ConnectRequest: &pb.ConnectRequest{
+				ConnectionId: "non-existent-id-12345",
+			},
+		},
+	}); err != nil {
+		t.Fatalf("failed to send ConnectRequest: %v", err)
+	}
+
+	// Read response (should be a failed ConnectAck).
+	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	resp, err := session.Receive()
+	if err != nil {
+		t.Fatalf("failed to receive response: %v", err)
+	}
+
+	connectAck := resp.GetConnectAck()
+	if connectAck == nil {
+		t.Fatalf("expected ConnectAck, got %T", resp.GetPayload())
+	}
+	if connectAck.GetSuccess() {
+		t.Fatal("ConnectAck should not be successful for non-existent ID")
+	}
+
+	time.Sleep(100 * time.Millisecond)
+
+	content := readLogContent(t, logDir)
+	if !strings.Contains(content, "[ROUTING]") {
+		t.Errorf("expected ROUTING tag in log, got: %q", content)
+	}
+	if !strings.Contains(content, "non-existent-id-12345") {
+		t.Errorf("expected connection ID in log, got: %q", content)
+	}
+	if !strings.Contains(content, "invalid connection ID") {
+		t.Errorf("expected 'invalid connection ID' in log, got: %q", content)
 	}
 }

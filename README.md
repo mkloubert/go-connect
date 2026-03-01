@@ -241,6 +241,27 @@ export GO_CONNECT_ID="327ac625-3b0c-4bd7-ab1b-bb9d733774ae"
 - **Framing:** Length-prefixed with 1 MB max frame size (DoS protection)
 - **Heartbeat:** 15s interval, 45s timeout for disconnect detection
 - **Silent Rejection:** Wrong passphrase causes silent connection close (no information leakage)
+- **Security Logging:** File-based audit log for suspicious activity (see below)
+
+### Security logging
+
+The broker writes security-relevant events to log files in the `logs/` directory (relative to the working directory). Log files use the date-based naming pattern `YYYYMMDD.logs.txt`.
+
+Each log entry has the format:
+
+```
+[YYYYMMDD hh:mm:ss.zzz] [TAG] [SEVERITY]  MESSAGE
+```
+
+The following events are logged:
+
+| Event                 | Tag       | What is logged                                                                                                                    |
+| --------------------- | --------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| Invalid auth payload  | `AUTH`    | Raw content as Base64 (max 256 bytes), remote IP and port. Detects bots trying services like SSH or HTTP against the broker port. |
+| Wrong passphrase      | `AUTH`    | Remote IP and port only. The passphrase value is never logged.                                                                    |
+| Invalid connection ID | `ROUTING` | Remote IP, port, and the submitted connection ID value.                                                                           |
+
+The logger is memory-optimized: files are opened in append mode for each write and closed immediately after. This avoids memory issues during high volumes of connection attempts.
 
 ## Architecture
 
@@ -252,6 +273,7 @@ go-connect/
 │   ├── crypto/                # X25519 handshake + AES-256-GCM encryption
 │   ├── protocol/              # Framing, encrypted sessions, handshake protocol
 │   ├── broker/                # Broker server, routing, client connections
+│   ├── logging/               # File-based security logger
 │   ├── tunnel/                # Listener, connector, and reconnect logic
 │   └── ui/                    # Colored terminal output and network interface listing
 ├── pb/                        # Generated protobuf code

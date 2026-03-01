@@ -23,6 +23,7 @@ package broker
 import (
 	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/base64"
 	"fmt"
 	"log"
 	"net"
@@ -30,6 +31,7 @@ import (
 	"time"
 
 	pb "github.com/mkloubert/go-connect/pb"
+	"github.com/mkloubert/go-connect/pkg/logging"
 )
 
 const (
@@ -41,6 +43,16 @@ const (
 	// AuthTimeout is the maximum time the broker waits for a client
 	// to send the Authenticate message after the handshake.
 	AuthTimeout = 10 * time.Second
+
+	// maxLogPayloadBytes is the maximum number of raw payload bytes
+	// that are logged as Base64 when an invalid auth payload is received.
+	maxLogPayloadBytes = 256
+
+	// logTagAuth is the log tag for authentication-related events.
+	logTagAuth = "AUTH"
+
+	// logTagRouting is the log tag for connection routing events.
+	logTagRouting = "ROUTING"
 )
 
 // ServerOption configures optional Server parameters.
@@ -52,6 +64,16 @@ func WithPassphrase(passphrase string) ServerOption {
 	return func(s *Server) {
 		hash := sha256.Sum256([]byte(passphrase))
 		s.passphraseHash = hash[:]
+	}
+}
+
+// WithLogger sets the security logger for the broker server.
+// When set, security-relevant events such as invalid authentication
+// payloads, passphrase mismatches, and invalid connection IDs are
+// written to the log files.
+func WithLogger(logger *logging.Logger) ServerOption {
+	return func(s *Server) {
+		s.logger = logger
 	}
 }
 
@@ -67,6 +89,7 @@ type Server struct {
 	wg             sync.WaitGroup
 	closeCh        chan struct{}
 	passphraseHash []byte
+	logger         *logging.Logger
 }
 
 // NewServer creates a new broker Server that will listen on the given
@@ -147,14 +170,20 @@ func (s *Server) acceptLoop() {
 // and validates the passphrase hash using constant-time comparison.
 // The read is bounded by AuthTimeout; if the client does not respond
 // in time, the connection is closed.
+//
+// Security logging:
+//   - Invalid payload (not an Authenticate message): logged with raw
+//     content as Base64 (max 256 bytes), remote IP and port.
+//   - Wrong passphrase: logged with remote IP and port only.
 func (s *Server) authenticateClient(client *ClientConn) error {
 	if err := client.conn.SetReadDeadline(time.Now().Add(AuthTimeout)); err != nil {
 		client.conn.Close()
 		return fmt.Errorf("failed to set auth deadline: %w", err)
 	}
 
-	env, err := client.Receive()
+	rawBytes, env, err := client.ReceiveRaw()
 	if err != nil {
+		s.logInvalidAuthPayload(client, rawBytes)
 		client.conn.Close()
 		return fmt.Errorf("failed to receive auth message: %w", err)
 	}
@@ -166,11 +195,13 @@ func (s *Server) authenticateClient(client *ClientConn) error {
 
 	auth := env.GetAuthenticate()
 	if auth == nil {
+		s.logInvalidAuthPayload(client, rawBytes)
 		client.conn.Close()
 		return fmt.Errorf("expected Authenticate, got %T", env.GetPayload())
 	}
 
 	if subtle.ConstantTimeCompare(auth.GetPassphraseHash(), s.passphraseHash) != 1 {
+		s.logPassphraseMismatch(client)
 		client.conn.Close()
 		return fmt.Errorf("passphrase mismatch")
 	}
@@ -238,6 +269,7 @@ func (s *Server) handleListener(client *ClientConn, connectionID string) {
 
 	if err := s.router.RegisterListener(connectionID, client); err != nil {
 		log.Printf("broker: failed to register listener %q: %v", connectionID, err)
+		s.logInvalidConnectionID(client, connectionID)
 		_ = client.Send(&pb.Envelope{
 			Payload: &pb.Envelope_RegisterAck{
 				RegisterAck: &pb.RegisterAck{
@@ -270,6 +302,7 @@ func (s *Server) handleConnector(client *ClientConn, connectionID string) {
 
 	if err := s.router.LinkConnector(connectionID, client); err != nil {
 		log.Printf("broker: failed to link connector %q: %v", connectionID, err)
+		s.logInvalidConnectionID(client, connectionID)
 		_ = client.Send(&pb.Envelope{
 			Payload: &pb.Envelope_ConnectAck{
 				ConnectAck: &pb.ConnectAck{
@@ -361,6 +394,54 @@ func (s *Server) Stop() {
 	s.clientMu.Unlock()
 
 	s.wg.Wait()
+}
+
+// logInvalidAuthPayload logs an invalid authentication payload. This
+// detects clients (e.g., bots) that do not send a proper Authenticate
+// message after the handshake. The raw content is logged as Base64,
+// truncated to maxLogPayloadBytes.
+func (s *Server) logInvalidAuthPayload(client *ClientConn, rawBytes []byte) {
+	if s.logger == nil {
+		return
+	}
+
+	payload := rawBytes
+	if len(payload) > maxLogPayloadBytes {
+		payload = payload[:maxLogPayloadBytes]
+	}
+
+	encoded := base64.StdEncoding.EncodeToString(payload)
+	remote := client.RemoteAddr().String()
+
+	_ = s.logger.Warn(logTagAuth,
+		fmt.Sprintf("invalid auth payload from %s: %s", remote, encoded))
+}
+
+// logPassphraseMismatch logs a failed passphrase authentication attempt.
+// Only the remote address is logged; the submitted passphrase value is
+// never written to logs.
+func (s *Server) logPassphraseMismatch(client *ClientConn) {
+	if s.logger == nil {
+		return
+	}
+
+	remote := client.RemoteAddr().String()
+
+	_ = s.logger.Warn(logTagAuth,
+		fmt.Sprintf("passphrase mismatch from %s", remote))
+}
+
+// logInvalidConnectionID logs an attempt to use an invalid connection ID.
+// The remote address and the submitted connection ID value are logged.
+func (s *Server) logInvalidConnectionID(client *ClientConn, connectionID string) {
+	if s.logger == nil {
+		return
+	}
+
+	remote := client.RemoteAddr().String()
+
+	_ = s.logger.Warn(logTagRouting,
+		fmt.Sprintf("invalid connection ID %q from %s", connectionID, remote))
 }
 
 // Address returns the actual network address the server is listening
