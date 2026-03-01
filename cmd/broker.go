@@ -64,9 +64,9 @@ func NewBrokerCommand() *cobra.Command {
 				return fmt.Errorf("failed to create logger: %w", err)
 			}
 
-			doNotBlockIPs, _ := cmd.Flags().GetBool("do-not-block-ips")
-			if !doNotBlockIPs && os.Getenv("GO_CONNECT_DO_NOT_BLOCK_IPS") == "1" {
-				doNotBlockIPs = true
+			enableIPsum, _ := cmd.Flags().GetBool("enable-ipsum")
+			if !enableIPsum && os.Getenv("GO_CONNECT_ENABLE_IPSUM") == "1" {
+				enableIPsum = true
 			}
 
 			opts := []broker.ServerOption{
@@ -74,9 +74,7 @@ func NewBrokerCommand() *cobra.Command {
 				broker.WithLogger(logger),
 			}
 
-			if doNotBlockIPs {
-				out.Warning("IP blocking is disabled.")
-			} else {
+			if enableIPsum {
 				ipsumURL := strings.TrimSpace(os.Getenv("GO_CONNECT_IPSUM_SOURCE"))
 				if ipsumURL == "" {
 					ipsumURL = ipsum.DefaultURL
@@ -147,7 +145,7 @@ func NewBrokerCommand() *cobra.Command {
 
 	cmd.Flags().String("bind-to", "0.0.0.0:1781", "address to listen on (host:port, :port, or host)")
 	cmd.Flags().String("passphrase", "", "passphrase for client authentication (overrides GO_CONNECT_PASSPHRASE env var)")
-	cmd.Flags().Bool("do-not-block-ips", false, "disable IPsum IP blocking (overrides GO_CONNECT_DO_NOT_BLOCK_IPS env var)")
+	cmd.Flags().Bool("enable-ipsum", false, "enable IPsum IP blocking (overrides GO_CONNECT_ENABLE_IPSUM env var)")
 
 	return cmd
 }

@@ -5,18 +5,18 @@ A CLI tool that creates encrypted TCP tunnels between two clients via a broker. 
 ## How it works
 
 ```
-Client A (listen)                Broker              Client B (connect)
-     |                             |                       |
-     |------ TCP + Handshake ----->|                       |
-     |------ Authenticate -------->|                       |
-     |------ Register(ID) -------->|                       |
-     |                             |<-- TCP + Handshake ---|
-     |                             |<-- Authenticate ------|
-     |                             |<-- Connect(ID) -------|
-     |                             |                       |
+Client A (listen)                Broker                     Client B (connect)
+     |                             |                              |
+     |------ TCP + Handshake ----->|                              |
+     |------ Authenticate -------->|                              |
+     |------ Register(ID) -------->|                              |
+     |                             |<----- TCP + Handshake -------|
+     |                             |<----- Authenticate ----------|
+     |                             |<----- Connect(ID) -----------|
+     |                             |                              |
      |<=== Encrypted Tunnel ==== Broker ==== Encrypted Tunnel ===>|
-     |                             |                       |
-Local Service (e.g. VNC)                               Local TCP Port
+     |                             |                              |
+Local Service (e.g. VNC)                                      Local TCP Port
 ```
 
 - **Client A** runs `listen` to expose a local service through the broker
@@ -40,10 +40,10 @@ Binaries are available for:
 | FreeBSD      | amd64, arm64, 386, armv7                                                                          |
 | Linux        | amd64, arm64, armv7, 386, loong64, mips, mipsle, mips64, mips64le, ppc64, ppc64le, riscv64, s390x |
 | macOS        | amd64, arm64 (Apple Silicon)                                                                      |
-| NetBSD       | amd64, arm64, 386                                                                                 |
-| OpenBSD      | amd64, arm64, 386, armv7                                                                          |
+| NetBSD       | 386, amd64, arm64                                                                                 |
+| OpenBSD      | 386, amd64, arm64, armv7                                                                          |
 | Solaris      | amd64                                                                                             |
-| Windows      | amd64, arm64, 386                                                                                 |
+| Windows      | 386, amd64, arm64                                                                                 |
 
 Each release includes SHA-256 checksums in `checksums.txt`.
 
@@ -158,12 +158,12 @@ Now connect to `localhost:60000` on Client B to access the service on Client A.
 
 ### Command reference
 
-| Command   | Alias | Required flags | Optional flags                                    |
-| --------- | ----- | -------------- | ------------------------------------------------- |
-| `broker`  | `b`   |                | `--bind-to`, `--passphrase`, `--do-not-block-ips` |
-| `connect` | `c`   | `--id`/`-i`    | `--broker`/`-b`, `--port`/`-p`, `--passphrase`    |
-| `listen`  | `l`   | `--port`/`-p`  | `--broker`/`-b`, `--id`/`-i`, `--passphrase`      |
-| `version` |       |                |                                                   |
+| Command   | Alias | Required flags | Optional flags                                 |
+| --------- | ----- | -------------- | ---------------------------------------------- |
+| `broker`  | `b`   |                | `--bind-to`, `--passphrase`, `--enable-ipsum`  |
+| `connect` | `c`   | `--id`/`-i`    | `--broker`/`-b`, `--port`/`-p`, `--passphrase` |
+| `listen`  | `l`   | `--port`/`-p`  | `--broker`/`-b`, `--id`/`-i`, `--passphrase`   |
+| `version` |       |                |                                                |
 
 ### Global flags
 
@@ -208,16 +208,16 @@ Press `Ctrl+C` during reconnect to cancel immediately.
 
 All commands support environment variables as alternatives to flags:
 
-| Variable                      | Commands                | Purpose                              |
-| ----------------------------- | ----------------------- | ------------------------------------ |
-| `GO_CONNECT_DO_NOT_BLOCK_IPS` | broker                  | Set to `1` to disable IP blocking    |
-| `GO_CONNECT_ID`               | listen, connect         | Connection ID                        |
-| `GO_CONNECT_IPSUM_SOURCE`     | broker                  | Custom URL for the IPsum feed        |
-| `GO_CONNECT_MAX_RETRIES`      | listen, connect         | Max reconnect attempts               |
-| `GO_CONNECT_PASSPHRASE`       | broker, listen, connect | Passphrase for authentication        |
-| `GO_CONNECT_QUIET`            | all                     | Set to `1` to enable quiet mode      |
-| `GO_CONNECT_VERBOSE`          | all                     | Set to `1` to enable verbose mode    |
-| `NO_COLOR`                    | all                     | Set to `1` to disable colored output |
+| Variable                  | Commands                | Purpose                                |
+| ------------------------- | ----------------------- | -------------------------------------- |
+| `GO_CONNECT_ENABLE_IPSUM` | broker                  | Set to `1` to enable IPsum IP blocking |
+| `GO_CONNECT_ID`           | listen, connect         | Connection ID                          |
+| `GO_CONNECT_IPSUM_SOURCE` | broker                  | Custom URL for the IPsum feed          |
+| `GO_CONNECT_MAX_RETRIES`  | listen, connect         | Max reconnect attempts                 |
+| `GO_CONNECT_PASSPHRASE`   | broker, listen, connect | Passphrase for authentication          |
+| `GO_CONNECT_QUIET`        | all                     | Set to `1` to enable quiet mode        |
+| `GO_CONNECT_VERBOSE`      | all                     | Set to `1` to enable verbose mode      |
+| `NO_COLOR`                | all                     | Set to `1` to disable colored output   |
 
 ```bash
 export GO_CONNECT_PASSPHRASE="my-secret"
@@ -243,12 +243,14 @@ export GO_CONNECT_ID="327ac625-3b0c-4bd7-ab1b-bb9d733774ae"
 - **Framing:** Length-prefixed with 1 MB max frame size (DoS protection)
 - **Heartbeat:** 15s interval, 45s timeout for disconnect detection
 - **Silent Rejection:** Wrong passphrase causes silent connection close (no information leakage)
-- **IP Threat Filter:** Automatic blocking of known malicious IPs via [IPsum](https://github.com/stamparm/ipsum) threat intelligence (loaded on startup)
+- **IP Threat Filter:** Optional blocking of known malicious IPs via [IPsum](https://github.com/stamparm/ipsum) threat intelligence (`--enable-ipsum`)
 - **Security Logging:** File-based audit log for suspicious activity (see below)
 
 ### IPsum threat intelligence filter
 
-On startup, the broker loads the [IPsum](https://github.com/stamparm/ipsum) threat intelligence feed from a local file (`ipsum.txt` in the working directory). If the file does not exist, it is downloaded automatically. If the download fails and no local file is available, the broker exits with an error.
+The broker can block known malicious IPs using the [IPsum](https://github.com/stamparm/ipsum) threat intelligence feed. This feature is **disabled by default** and must be enabled with `--enable-ipsum` or `GO_CONNECT_ENABLE_IPSUM=1`.
+
+When enabled, the broker loads the feed from a local file (`ipsum.txt` in the working directory). If the file does not exist, it is downloaded automatically. If the download fails and no local file is available, the broker exits with an error.
 
 IPs that appear on 3 or more blacklists are blocked before the handshake. This means blocked connections are rejected at the TCP level with no protocol overhead.
 
@@ -258,7 +260,7 @@ The feed is downloaded from:
 https://raw.githubusercontent.com/stamparm/ipsum/master/ipsum.txt
 ```
 
-To disable IP blocking entirely, use `--do-not-block-ips` or set `GO_CONNECT_DO_NOT_BLOCK_IPS=1`. When disabled, the `ipsum.txt` file is not required and no IP checks are performed.
+A custom feed URL can be set with `GO_CONNECT_IPSUM_SOURCE`.
 
 Unparseable lines in the feed are logged as warnings to the console (not to the security log files).
 
