@@ -1,0 +1,140 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: "go.mod"
+
+      - name: Run tests
+        run: go test ./... -timeout 60s
+
+  release:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: "go.mod"
+
+      - name: Extract version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Set version in source
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.VERSION }}
+        run: |
+          sed -i "s/const Version = \"0.0.0\"/const Version = \"${RELEASE_VERSION}\"/" cmd/app_version.go
+          grep 'const Version' cmd/app_version.go
+
+      - name: Build all targets
+        run: |
+          mkdir -p dist
+
+          build() {
+            local goos=$1
+            local goarch=$2
+            local goarm=${3:-}
+            local output="go-connect"
+            local archive_name="go-connect-${goos}-${goarch}"
+
+            if [ -n "$goarm" ]; then
+              archive_name="${archive_name}v${goarm}"
+            fi
+
+            if [ "$goos" = "windows" ]; then
+              output="go-connect.exe"
+            fi
+
+            echo "Building ${goos}/${goarch}${goarm:+v$goarm}..."
+
+            build_env="CGO_ENABLED=0 GOOS=${goos} GOARCH=${goarch}"
+            if [ -n "$goarm" ]; then
+              build_env="${build_env} GOARM=${goarm}"
+            fi
+
+            env ${build_env} go build -trimpath -ldflags="-s -w" -o "${output}" .
+
+            if [ "$goos" = "windows" ]; then
+              zip "dist/${archive_name}.zip" "${output}"
+            else
+              tar -czf "dist/${archive_name}.tar.gz" "${output}"
+            fi
+
+            rm -f "${output}"
+          }
+
+          # Linux
+          build linux amd64
+          build linux arm64
+          build linux arm 7
+          build linux 386
+          build linux loong64
+          build linux mips
+          build linux mipsle
+          build linux mips64
+          build linux mips64le
+          build linux ppc64
+          build linux ppc64le
+          build linux riscv64
+          build linux s390x
+
+          # macOS
+          build darwin amd64
+          build darwin arm64
+
+          # Windows
+          build windows amd64
+          build windows arm64
+          build windows 386
+
+          # FreeBSD
+          build freebsd amd64
+          build freebsd arm64
+          build freebsd 386
+          build freebsd arm 7
+
+          # OpenBSD
+          build openbsd amd64
+          build openbsd arm64
+          build openbsd 386
+          build openbsd arm 7
+
+          # NetBSD
+          build netbsd amd64
+          build netbsd arm64
+          build netbsd 386
+
+          # DragonflyBSD
+          build dragonfly amd64
+
+          # Solaris / Illumos
+          build solaris amd64
+
+          # IBM AIX
+          build aix ppc64
+
+      - name: Generate checksums
+        working-directory: dist
+        run: sha256sum * > checksums.txt
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: dist/*

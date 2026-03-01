@@ -20,19 +20,5 @@
 
 package cmd
 
-import (
-	"fmt"
-
-	"github.com/spf13/cobra"
-)
-
-// NewVersionCommand creates a cobra command that prints version information.
-func NewVersionCommand() *cobra.Command {
-	return &cobra.Command{
-		Use:   "version",
-		Short: "Print version information",
-		Run: func(cmd *cobra.Command, args []string) {
-			fmt.Printf("go-connect v%s\n", Version)
-		},
-	}
-}
+// Version is the current version of the go-connect tool.
+const Version = "0.0.0"

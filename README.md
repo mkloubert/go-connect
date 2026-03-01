@@ -25,7 +25,40 @@ Local Service (e.g. VNC)                        Local TCP Port
 - Neither client needs to know the other's IP address
 - No firewall changes required -- both clients connect outbound to the broker
 
-## Build
+## Installation
+
+### Download a release
+
+Download a pre-built binary from the [Releases](https://github.com/mkloubert/go-connect/releases) page.
+
+Binaries are available for:
+
+| OS           | Architectures                                                              |
+| ------------ | -------------------------------------------------------------------------- |
+| Linux        | amd64, arm64, armv7, 386, loong64, mips, mipsle, mips64, mips64le, ppc64, ppc64le, riscv64, s390x |
+| macOS        | amd64, arm64 (Apple Silicon)                                               |
+| Windows      | amd64, arm64, 386                                                          |
+| FreeBSD      | amd64, arm64, 386, armv7                                                   |
+| OpenBSD      | amd64, arm64, 386, armv7                                                   |
+| NetBSD       | amd64, arm64, 386                                                          |
+| DragonflyBSD | amd64                                                                      |
+| Solaris      | amd64                                                                      |
+| AIX          | ppc64                                                                      |
+
+Each release includes SHA-256 checksums in `checksums.txt`.
+
+Example (Linux amd64):
+
+```bash
+# Download and extract
+tar -xzf go-connect-linux-amd64.tar.gz
+
+# Make executable and move to PATH
+chmod +x go-connect
+sudo mv go-connect /usr/local/bin/
+```
+
+### Build from source
 
 ```bash
 go build -o go-connect .
