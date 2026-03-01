@@ -38,6 +38,7 @@ message Envelope {
     Heartbeat heartbeat = 10;
     Disconnect disconnect = 11;
     ErrorMsg error_msg = 12;
+    Authenticate authenticate = 13;
   }
 }
 
@@ -90,4 +91,8 @@ message Disconnect {
 
 message ErrorMsg {
   string message = 1;
+}
+
+message Authenticate {
+  bytes passphrase_hash = 1;
 }

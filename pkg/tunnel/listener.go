@@ -21,6 +21,7 @@
 package tunnel
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"io"
 	"log"
@@ -66,6 +67,7 @@ type Listener struct {
 	brokerConn   net.Conn
 	session      *protocol.Session
 	connectionID string
+	passphrase   string
 	streams      map[uint32]*streamState
 	streamsMu    sync.Mutex
 	closeCh      chan struct{}
@@ -74,11 +76,12 @@ type Listener struct {
 
 // NewListener creates a new Listener that will forward traffic between
 // the broker and the local service running on localPort.
-func NewListener(localPort, brokerAddr, connectionID string) *Listener {
+func NewListener(localPort, brokerAddr, connectionID, passphrase string) *Listener {
 	return &Listener{
 		localPort:    localPort,
 		brokerAddr:   brokerAddr,
 		connectionID: connectionID,
+		passphrase:   passphrase,
 		streams:      make(map[uint32]*streamState),
 		closeCh:      make(chan struct{}),
 	}
@@ -100,6 +103,20 @@ func (l *Listener) Start() error {
 
 	l.brokerConn = conn
 	l.session = session
+
+	// Authenticate with the broker.
+	hash := sha256.Sum256([]byte(l.passphrase))
+	err = l.session.Send(&pb.Envelope{
+		Payload: &pb.Envelope_Authenticate{
+			Authenticate: &pb.Authenticate{
+				PassphraseHash: hash[:],
+			},
+		},
+	})
+	if err != nil {
+		conn.Close()
+		return fmt.Errorf("listener: failed to send authenticate: %w", err)
+	}
 
 	// Send Register message with the connection ID.
 	err = l.session.Send(&pb.Envelope{

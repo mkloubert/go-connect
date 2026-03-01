@@ -8,8 +8,10 @@ A CLI tool that creates encrypted TCP tunnels between two clients via a broker. 
 Client A (listen)          Broker              Client B (connect)
      |                       |                       |
      |--- TCP + Handshake -->|                       |
+     |--- Authenticate ----->|                       |
      |--- Register(ID) ----->|                       |
      |                       |<-- TCP + Handshake ---|
+     |                       |<-- Authenticate ------|
      |                       |<-- Connect(ID) -------|
      |                       |                       |
      |<=== Encrypted Tunnel ==== Broker ==== Encrypted Tunnel ===>|
@@ -37,6 +39,12 @@ go build -o go-connect .
 ./go-connect broker 0.0.0.0:1781
 ```
 
+With optional passphrase protection:
+
+```bash
+./go-connect broker 0.0.0.0:1781 --passphrase "my-secret"
+```
+
 ### Expose a local service (Client A)
 
 ```bash
@@ -45,10 +53,22 @@ go build -o go-connect .
 
 This prints a connection ID, e.g. `327ac625-3b0c-4bd7-ab1b-bb9d733774ae`.
 
+With passphrase (must match the broker passphrase):
+
+```bash
+./go-connect listen 5900 1.2.3.4:1781 --passphrase "my-secret"
+```
+
 ### Connect to the service (Client B)
 
 ```bash
 ./go-connect connect 1.2.3.4:1781 327ac625-3b0c-4bd7-ab1b-bb9d733774ae 60000
+```
+
+With passphrase:
+
+```bash
+./go-connect connect 1.2.3.4:1781 327ac625-3b0c-4bd7-ab1b-bb9d733774ae 60000 --passphrase "my-secret"
 ```
 
 Now connect to `localhost:60000` on Client B to access the service on Client A's port 5900.
@@ -57,13 +77,24 @@ Now connect to `localhost:60000` on Client B to access the service on Client A's
 
 ```bash
 # Client A: expose local VNC server
-./go-connect listen 5900 broker.example.com:1781
+./go-connect listen 5900 broker.example.com:1781 --passphrase "my-secret"
 # Output: Connection ID: 327ac625-3b0c-4bd7-ab1b-bb9d733774ae
 
 # Client B: make VNC available locally
-./go-connect connect broker.example.com:1781 327ac625-3b0c-4bd7-ab1b-bb9d733774ae 60000
+./go-connect connect broker.example.com:1781 327ac625-3b0c-4bd7-ab1b-bb9d733774ae 60000 --passphrase "my-secret"
 
 # Now open a VNC viewer on Client B and connect to localhost:60000
+```
+
+### Environment variable
+
+All commands support the `GO_CONNECT_PASSPHRASE` environment variable as an alternative to the `--passphrase` flag:
+
+```bash
+export GO_CONNECT_PASSPHRASE="my-secret"
+./go-connect broker 0.0.0.0:1781
+./go-connect listen 5900 1.2.3.4:1781
+./go-connect connect 1.2.3.4:1781 <connection-id> 60000
 ```
 
 ### Version
@@ -77,9 +108,11 @@ Now connect to `localhost:60000` on Client B to access the service on Client A's
 - **Key Exchange:** X25519 (Curve25519 ECDH) per client-broker connection
 - **Key Derivation:** HKDF-SHA256 (RFC 5869)
 - **Encryption:** AES-256-GCM authenticated encryption
+- **Authentication:** Optional passphrase (SHA-256 hash, constant-time comparison)
 - **Nonce Management:** Counter-based (no reuse possible)
 - **Framing:** Length-prefixed with 1 MB max frame size (DoS protection)
 - **Heartbeat:** 15s interval, 45s timeout for disconnect detection
+- **Silent Rejection:** Wrong passphrase causes silent connection close (no information leakage)
 
 ## Architecture
 

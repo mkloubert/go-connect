@@ -21,10 +21,13 @@
 package broker
 
 import (
+	"crypto/sha256"
+	"crypto/subtle"
 	"fmt"
 	"log"
 	"net"
 	"sync"
+	"time"
 
 	pb "github.com/mkloubert/go-connect/pb"
 )
@@ -34,31 +37,56 @@ const (
 	// connections the broker will accept. Connections beyond this limit
 	// are rejected immediately, before the expensive handshake.
 	DefaultMaxConnections = 1024
+
+	// AuthTimeout is the maximum time the broker waits for a client
+	// to send the Authenticate message after the handshake.
+	AuthTimeout = 10 * time.Second
 )
+
+// ServerOption configures optional Server parameters.
+type ServerOption func(*Server)
+
+// WithPassphrase sets the passphrase that clients must provide
+// after the encrypted handshake.
+func WithPassphrase(passphrase string) ServerOption {
+	return func(s *Server) {
+		hash := sha256.Sum256([]byte(passphrase))
+		s.passphraseHash = hash[:]
+	}
+}
 
 // Server is the broker server that accepts client connections,
 // performs handshakes, and relays messages between linked peers.
 type Server struct {
-	address  string
-	router   *Router
-	listener net.Listener
-	clients  map[*ClientConn]struct{}
-	clientMu sync.Mutex
-	connSem  chan struct{} // semaphore limiting concurrent connections
-	wg       sync.WaitGroup
-	closeCh  chan struct{}
+	address        string
+	router         *Router
+	listener       net.Listener
+	clients        map[*ClientConn]struct{}
+	clientMu       sync.Mutex
+	connSem        chan struct{} // semaphore limiting concurrent connections
+	wg             sync.WaitGroup
+	closeCh        chan struct{}
+	passphraseHash []byte
 }
 
 // NewServer creates a new broker Server that will listen on the given
 // address (e.g., ":1781" or "127.0.0.1:0").
-func NewServer(address string) *Server {
-	return &Server{
+func NewServer(address string, opts ...ServerOption) *Server {
+	s := &Server{
 		address: address,
 		router:  NewRouter(),
 		clients: make(map[*ClientConn]struct{}),
 		connSem: make(chan struct{}, DefaultMaxConnections),
 		closeCh: make(chan struct{}),
 	}
+	for _, opt := range opts {
+		opt(s)
+	}
+	if s.passphraseHash == nil {
+		hash := sha256.Sum256([]byte(""))
+		s.passphraseHash = hash[:]
+	}
+	return s
 }
 
 // Start begins listening for incoming TCP connections and spawns
@@ -115,6 +143,41 @@ func (s *Server) acceptLoop() {
 	}
 }
 
+// authenticateClient reads the Authenticate message from the client
+// and validates the passphrase hash using constant-time comparison.
+// The read is bounded by AuthTimeout; if the client does not respond
+// in time, the connection is closed.
+func (s *Server) authenticateClient(client *ClientConn) error {
+	if err := client.conn.SetReadDeadline(time.Now().Add(AuthTimeout)); err != nil {
+		client.conn.Close()
+		return fmt.Errorf("failed to set auth deadline: %w", err)
+	}
+
+	env, err := client.Receive()
+	if err != nil {
+		client.conn.Close()
+		return fmt.Errorf("failed to receive auth message: %w", err)
+	}
+
+	if err := client.conn.SetReadDeadline(time.Time{}); err != nil {
+		client.conn.Close()
+		return fmt.Errorf("failed to clear auth deadline: %w", err)
+	}
+
+	auth := env.GetAuthenticate()
+	if auth == nil {
+		client.conn.Close()
+		return fmt.Errorf("expected Authenticate, got %T", env.GetPayload())
+	}
+
+	if subtle.ConstantTimeCompare(auth.GetPassphraseHash(), s.passphraseHash) != 1 {
+		client.conn.Close()
+		return fmt.Errorf("passphrase mismatch")
+	}
+
+	return nil
+}
+
 // handleClient performs the handshake, reads the first message to
 // determine if the client is a listener (Register) or a connector
 // (ConnectRequest), and dispatches accordingly. If the first message
@@ -129,6 +192,12 @@ func (s *Server) handleClient(conn net.Conn) {
 
 	s.trackClient(client)
 	defer s.untrackClient(client)
+
+	// Authenticate the client before determining its role.
+	if err := s.authenticateClient(client); err != nil {
+		log.Printf("broker: authentication failed: %v", err)
+		return
+	}
 
 	// Read first message to determine client role.
 	env, err := client.Receive()

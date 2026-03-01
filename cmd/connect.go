@@ -34,13 +34,18 @@ import (
 // via the broker. It opens a local TCP port where clients can connect,
 // and tunnels all traffic through the broker to the remote listener.
 func NewConnectCommand() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "connect <broker-address> <connection-id> <local-port>",
 		Short: "Connect to a listener via the broker",
 		Long:  "Connects to a listener through the broker and exposes the remote service on a local port",
 		Args:  cobra.ExactArgs(3),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			connector := tunnel.NewConnector(args[0], args[1], args[2])
+			passphrase, _ := cmd.Flags().GetString("passphrase")
+			if passphrase == "" {
+				passphrase = os.Getenv("GO_CONNECT_PASSPHRASE")
+			}
+
+			connector := tunnel.NewConnector(args[0], args[1], args[2], passphrase)
 			if err := connector.Start(); err != nil {
 				return fmt.Errorf("failed to start connector: %w", err)
 			}
@@ -48,7 +53,6 @@ func NewConnectCommand() *cobra.Command {
 			fmt.Printf("Connected to listener %s via broker %s\n", args[1], args[0])
 			fmt.Printf("Local service available on port %s\n", args[2])
 
-			// Wait for signal or disconnect.
 			sigCh := make(chan os.Signal, 1)
 			signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
@@ -64,4 +68,8 @@ func NewConnectCommand() *cobra.Command {
 			return nil
 		},
 	}
+
+	cmd.Flags().String("passphrase", "", "passphrase for broker authentication (overrides GO_CONNECT_PASSPHRASE env var)")
+
+	return cmd
 }

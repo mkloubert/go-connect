@@ -105,7 +105,7 @@ func TestEndToEnd_EchoTunnel(t *testing.T) {
 	connectionID := uuid.New().String()
 
 	// 3. Start listener connecting echo port to broker.
-	listener := tunnel.NewListener(echoPort, brokerAddr, connectionID)
+	listener := tunnel.NewListener(echoPort, brokerAddr, connectionID, "")
 	if err := listener.Start(); err != nil {
 		t.Fatalf("failed to start listener: %v", err)
 	}
@@ -116,7 +116,7 @@ func TestEndToEnd_EchoTunnel(t *testing.T) {
 
 	// 5. Find a free port for the connector and start it.
 	connectorPort := getFreePort(t)
-	connector := tunnel.NewConnector(brokerAddr, connectionID, connectorPort)
+	connector := tunnel.NewConnector(brokerAddr, connectionID, connectorPort, "")
 	if err := connector.Start(); err != nil {
 		t.Fatalf("failed to start connector: %v", err)
 	}
@@ -173,7 +173,7 @@ func TestEndToEnd_MultipleStreams(t *testing.T) {
 	brokerAddr := srv.Address()
 	connectionID := uuid.New().String()
 
-	listener := tunnel.NewListener(echoPort, brokerAddr, connectionID)
+	listener := tunnel.NewListener(echoPort, brokerAddr, connectionID, "")
 	if err := listener.Start(); err != nil {
 		t.Fatalf("failed to start listener: %v", err)
 	}
@@ -182,7 +182,7 @@ func TestEndToEnd_MultipleStreams(t *testing.T) {
 	time.Sleep(200 * time.Millisecond)
 
 	connectorPort := getFreePort(t)
-	connector := tunnel.NewConnector(brokerAddr, connectionID, connectorPort)
+	connector := tunnel.NewConnector(brokerAddr, connectionID, connectorPort, "")
 	if err := connector.Start(); err != nil {
 		t.Fatalf("failed to start connector: %v", err)
 	}
@@ -262,7 +262,7 @@ func TestEndToEnd_DisconnectNotification(t *testing.T) {
 	echoLn, echoPort := startEchoServer(t)
 	defer echoLn.Close()
 
-	listener := tunnel.NewListener(echoPort, brokerAddr, connectionID)
+	listener := tunnel.NewListener(echoPort, brokerAddr, connectionID, "")
 	if err := listener.Start(); err != nil {
 		t.Fatalf("failed to start listener: %v", err)
 	}
@@ -270,7 +270,7 @@ func TestEndToEnd_DisconnectNotification(t *testing.T) {
 	time.Sleep(200 * time.Millisecond)
 
 	connectorPort := getFreePort(t)
-	connector := tunnel.NewConnector(brokerAddr, connectionID, connectorPort)
+	connector := tunnel.NewConnector(brokerAddr, connectionID, connectorPort, "")
 	if err := connector.Start(); err != nil {
 		t.Fatalf("failed to start connector: %v", err)
 	}
@@ -288,5 +288,94 @@ func TestEndToEnd_DisconnectNotification(t *testing.T) {
 		// Success: connector was notified of disconnect.
 	case <-time.After(5 * time.Second):
 		t.Fatal("timeout: connector was not notified of listener disconnect within 5s")
+	}
+}
+
+// TestEndToEnd_EchoTunnel_WithPassphrase tests the full tunnel lifecycle
+// with a passphrase-protected broker. It verifies that a listener and
+// connector with the correct passphrase can successfully exchange data
+// through the encrypted tunnel.
+func TestEndToEnd_EchoTunnel_WithPassphrase(t *testing.T) {
+	const passphrase = "integration-test-secret"
+
+	echoLn, echoPort := startEchoServer(t)
+	defer echoLn.Close()
+
+	srv := broker.NewServer("127.0.0.1:0", broker.WithPassphrase(passphrase))
+	if err := srv.Start(); err != nil {
+		t.Fatalf("failed to start broker: %v", err)
+	}
+	defer srv.Stop()
+
+	brokerAddr := srv.Address()
+	connectionID := uuid.New().String()
+
+	listener := tunnel.NewListener(echoPort, brokerAddr, connectionID, passphrase)
+	if err := listener.Start(); err != nil {
+		t.Fatalf("failed to start listener: %v", err)
+	}
+	defer listener.Close()
+
+	time.Sleep(200 * time.Millisecond)
+
+	connectorPort := getFreePort(t)
+	connector := tunnel.NewConnector(brokerAddr, connectionID, connectorPort, passphrase)
+	if err := connector.Start(); err != nil {
+		t.Fatalf("failed to start connector: %v", err)
+	}
+	defer connector.Close()
+
+	time.Sleep(200 * time.Millisecond)
+
+	conn, err := net.Dial("tcp", net.JoinHostPort("127.0.0.1", connectorPort))
+	if err != nil {
+		t.Fatalf("failed to connect to connector port: %v", err)
+	}
+	defer conn.Close()
+
+	message := []byte("Hello through passphrase-protected tunnel!")
+	_, err = conn.Write(message)
+	if err != nil {
+		t.Fatalf("failed to write message: %v", err)
+	}
+
+	if err := conn.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		t.Fatalf("failed to set read deadline: %v", err)
+	}
+
+	response := make([]byte, len(message))
+	_, err = io.ReadFull(conn, response)
+	if err != nil {
+		t.Fatalf("failed to read echo response: %v", err)
+	}
+
+	if string(response) != string(message) {
+		t.Fatalf("echo mismatch: got %q, want %q", response, message)
+	}
+}
+
+// TestEndToEnd_WrongPassphrase_Rejected tests that a client providing an
+// incorrect passphrase is rejected by the broker. The listener should fail
+// to start because the broker closes the connection after authentication
+// failure.
+func TestEndToEnd_WrongPassphrase_Rejected(t *testing.T) {
+	srv := broker.NewServer("127.0.0.1:0", broker.WithPassphrase("correct-secret"))
+	if err := srv.Start(); err != nil {
+		t.Fatalf("failed to start broker: %v", err)
+	}
+	defer srv.Stop()
+
+	brokerAddr := srv.Address()
+	connectionID := uuid.New().String()
+
+	echoLn, echoPort := startEchoServer(t)
+	defer echoLn.Close()
+
+	// Listener with wrong passphrase should fail to start.
+	listener := tunnel.NewListener(echoPort, brokerAddr, connectionID, "wrong-secret")
+	err := listener.Start()
+	if err == nil {
+		listener.Close()
+		t.Fatal("expected listener.Start() to fail with wrong passphrase, got nil")
 	}
 }

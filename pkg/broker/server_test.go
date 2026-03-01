@@ -22,6 +22,7 @@ package broker
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"net"
 	"testing"
 	"time"
@@ -31,8 +32,14 @@ import (
 )
 
 // dialAndHandshake connects to the broker at the given address, performs
-// the handshake, and returns an encrypted session over the connection.
+// the handshake, and sends an Authenticate message with an empty passphrase.
 func dialAndHandshake(t *testing.T, addr string) (net.Conn, *protocol.Session) {
+	return dialAndHandshakeWithPassphrase(t, addr, "")
+}
+
+// dialAndHandshakeWithPassphrase connects to the broker, performs the
+// handshake, and sends an Authenticate message with the given passphrase.
+func dialAndHandshakeWithPassphrase(t *testing.T, addr string, passphrase string) (net.Conn, *protocol.Session) {
 	t.Helper()
 
 	conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
@@ -44,6 +51,18 @@ func dialAndHandshake(t *testing.T, addr string) (net.Conn, *protocol.Session) {
 	if err != nil {
 		conn.Close()
 		t.Fatalf("handshake failed: %v", err)
+	}
+
+	hash := sha256.Sum256([]byte(passphrase))
+	if err := session.Send(&pb.Envelope{
+		Payload: &pb.Envelope_Authenticate{
+			Authenticate: &pb.Authenticate{
+				PassphraseHash: hash[:],
+			},
+		},
+	}); err != nil {
+		conn.Close()
+		t.Fatalf("failed to send Authenticate: %v", err)
 	}
 
 	return conn, session
@@ -171,5 +190,87 @@ func TestServer_ListenerConnectorLink(t *testing.T) {
 	}
 	if !bytes.Equal(replyData.GetPayload(), replyPayload) {
 		t.Fatalf("connector: reply payload mismatch: got %q, want %q", replyData.GetPayload(), replyPayload)
+	}
+}
+
+func TestServer_PassphraseAuth_Correct(t *testing.T) {
+	srv := NewServer("127.0.0.1:0", WithPassphrase("test-secret"))
+	if err := srv.Start(); err != nil {
+		t.Fatalf("failed to start broker: %v", err)
+	}
+	defer srv.Stop()
+
+	addr := srv.Address()
+	conn, session := dialAndHandshakeWithPassphrase(t, addr, "test-secret")
+	defer conn.Close()
+
+	if err := session.Send(&pb.Envelope{
+		Payload: &pb.Envelope_Register{
+			Register: &pb.Register{
+				ConnectionId: "auth-test-id",
+			},
+		},
+	}); err != nil {
+		t.Fatalf("failed to send Register: %v", err)
+	}
+
+	ack, err := session.Receive()
+	if err != nil {
+		t.Fatalf("failed to receive RegisterAck: %v", err)
+	}
+	regAck := ack.GetRegisterAck()
+	if regAck == nil {
+		t.Fatalf("expected RegisterAck, got %T", ack.GetPayload())
+	}
+	if !regAck.GetSuccess() {
+		t.Fatalf("RegisterAck not successful: %s", regAck.GetMessage())
+	}
+}
+
+func TestServer_PassphraseAuth_Wrong(t *testing.T) {
+	srv := NewServer("127.0.0.1:0", WithPassphrase("correct-password"))
+	if err := srv.Start(); err != nil {
+		t.Fatalf("failed to start broker: %v", err)
+	}
+	defer srv.Stop()
+
+	addr := srv.Address()
+	conn, session := dialAndHandshakeWithPassphrase(t, addr, "wrong-password")
+	defer conn.Close()
+
+	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	_, err := session.Receive()
+	if err == nil {
+		t.Fatal("expected error on Receive after wrong passphrase, got nil")
+	}
+}
+
+func TestServer_PassphraseAuth_EmptyDefault(t *testing.T) {
+	srv := NewServer("127.0.0.1:0")
+	if err := srv.Start(); err != nil {
+		t.Fatalf("failed to start broker: %v", err)
+	}
+	defer srv.Stop()
+
+	addr := srv.Address()
+	conn, session := dialAndHandshake(t, addr)
+	defer conn.Close()
+
+	if err := session.Send(&pb.Envelope{
+		Payload: &pb.Envelope_Register{
+			Register: &pb.Register{
+				ConnectionId: "empty-passphrase-test",
+			},
+		},
+	}); err != nil {
+		t.Fatalf("failed to send Register: %v", err)
+	}
+
+	ack, err := session.Receive()
+	if err != nil {
+		t.Fatalf("failed to receive RegisterAck: %v", err)
+	}
+	if !ack.GetRegisterAck().GetSuccess() {
+		t.Fatalf("RegisterAck not successful: %s", ack.GetRegisterAck().GetMessage())
 	}
 }

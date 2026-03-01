@@ -21,6 +21,7 @@
 package tunnel
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"io"
 	"log"
@@ -41,6 +42,7 @@ type Connector struct {
 	brokerAddr     string
 	connectionID   string
 	localPort      string
+	passphrase     string
 	brokerConn     net.Conn
 	session        *protocol.Session
 	nextStreamID   atomic.Uint32
@@ -55,11 +57,12 @@ type Connector struct {
 
 // NewConnector creates a new Connector that will bridge between local
 // connections on localPort and the remote listener via the broker.
-func NewConnector(brokerAddr, connectionID, localPort string) *Connector {
+func NewConnector(brokerAddr, connectionID, localPort, passphrase string) *Connector {
 	return &Connector{
 		brokerAddr:    brokerAddr,
 		connectionID:  connectionID,
 		localPort:     localPort,
+		passphrase:    passphrase,
 		streams:       make(map[uint32]net.Conn),
 		pendingStreams: make(map[uint32]chan bool),
 		closeCh:       make(chan struct{}),
@@ -82,6 +85,20 @@ func (c *Connector) Start() error {
 
 	c.brokerConn = conn
 	c.session = session
+
+	// Authenticate with the broker.
+	hash := sha256.Sum256([]byte(c.passphrase))
+	err = c.session.Send(&pb.Envelope{
+		Payload: &pb.Envelope_Authenticate{
+			Authenticate: &pb.Authenticate{
+				PassphraseHash: hash[:],
+			},
+		},
+	})
+	if err != nil {
+		conn.Close()
+		return fmt.Errorf("connector: failed to send authenticate: %w", err)
+	}
 
 	// Send ConnectRequest with the connection ID.
 	err = c.session.Send(&pb.Envelope{

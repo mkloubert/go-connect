@@ -34,13 +34,18 @@ import (
 // The broker relays encrypted connections between listener and connector
 // clients.
 func NewBrokerCommand() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "broker <address>",
 		Short: "Start the broker server",
 		Long:  "Starts the broker (Vermittler) that relays encrypted connections between clients",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			srv := broker.NewServer(args[0])
+			passphrase, _ := cmd.Flags().GetString("passphrase")
+			if passphrase == "" {
+				passphrase = os.Getenv("GO_CONNECT_PASSPHRASE")
+			}
+
+			srv := broker.NewServer(args[0], broker.WithPassphrase(passphrase))
 
 			if err := srv.Start(); err != nil {
 				return fmt.Errorf("failed to start broker: %w", err)
@@ -48,7 +53,6 @@ func NewBrokerCommand() *cobra.Command {
 
 			fmt.Printf("Broker listening on %s\n", srv.Address())
 
-			// Wait for SIGINT/SIGTERM to gracefully shut down.
 			sigCh := make(chan os.Signal, 1)
 			signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 			<-sigCh
@@ -59,4 +63,8 @@ func NewBrokerCommand() *cobra.Command {
 			return nil
 		},
 	}
+
+	cmd.Flags().String("passphrase", "", "passphrase for client authentication (overrides GO_CONNECT_PASSPHRASE env var)")
+
+	return cmd
 }

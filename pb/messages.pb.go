@@ -57,6 +57,7 @@ type Envelope struct {
 	//	*Envelope_Heartbeat
 	//	*Envelope_Disconnect
 	//	*Envelope_ErrorMsg
+	//	*Envelope_Authenticate
 	Payload       isEnvelope_Payload `protobuf_oneof:"payload"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -207,6 +208,15 @@ func (x *Envelope) GetErrorMsg() *ErrorMsg {
 	return nil
 }
 
+func (x *Envelope) GetAuthenticate() *Authenticate {
+	if x != nil {
+		if x, ok := x.Payload.(*Envelope_Authenticate); ok {
+			return x.Authenticate
+		}
+	}
+	return nil
+}
+
 type isEnvelope_Payload interface {
 	isEnvelope_Payload()
 }
@@ -259,6 +269,10 @@ type Envelope_ErrorMsg struct {
 	ErrorMsg *ErrorMsg `protobuf:"bytes,12,opt,name=error_msg,json=errorMsg,proto3,oneof"`
 }
 
+type Envelope_Authenticate struct {
+	Authenticate *Authenticate `protobuf:"bytes,13,opt,name=authenticate,proto3,oneof"`
+}
+
 func (*Envelope_Handshake) isEnvelope_Payload() {}
 
 func (*Envelope_Register) isEnvelope_Payload() {}
@@ -282,6 +296,8 @@ func (*Envelope_Heartbeat) isEnvelope_Payload() {}
 func (*Envelope_Disconnect) isEnvelope_Payload() {}
 
 func (*Envelope_ErrorMsg) isEnvelope_Payload() {}
+
+func (*Envelope_Authenticate) isEnvelope_Payload() {}
 
 type Handshake struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -843,11 +859,55 @@ func (x *ErrorMsg) GetMessage() string {
 	return ""
 }
 
+type Authenticate struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	PassphraseHash []byte                 `protobuf:"bytes,1,opt,name=passphrase_hash,json=passphraseHash,proto3" json:"passphrase_hash,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *Authenticate) Reset() {
+	*x = Authenticate{}
+	mi := &file_proto_messages_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Authenticate) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Authenticate) ProtoMessage() {}
+
+func (x *Authenticate) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_messages_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Authenticate.ProtoReflect.Descriptor instead.
+func (*Authenticate) Descriptor() ([]byte, []int) {
+	return file_proto_messages_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *Authenticate) GetPassphraseHash() []byte {
+	if x != nil {
+		return x.PassphraseHash
+	}
+	return nil
+}
+
 var File_proto_messages_proto protoreflect.FileDescriptor
 
 const file_proto_messages_proto_rawDesc = "" +
 	"\n" +
-	"\x14proto/messages.proto\x12\tgoconnect\"\xc0\x05\n" +
+	"\x14proto/messages.proto\x12\tgoconnect\"\xff\x05\n" +
 	"\bEnvelope\x124\n" +
 	"\thandshake\x18\x01 \x01(\v2\x14.goconnect.HandshakeH\x00R\thandshake\x121\n" +
 	"\bregister\x18\x02 \x01(\v2\x13.goconnect.RegisterH\x00R\bregister\x12;\n" +
@@ -865,7 +925,8 @@ const file_proto_messages_proto_rawDesc = "" +
 	"\n" +
 	"disconnect\x18\v \x01(\v2\x15.goconnect.DisconnectH\x00R\n" +
 	"disconnect\x122\n" +
-	"\terror_msg\x18\f \x01(\v2\x13.goconnect.ErrorMsgH\x00R\berrorMsgB\t\n" +
+	"\terror_msg\x18\f \x01(\v2\x13.goconnect.ErrorMsgH\x00R\berrorMsg\x12=\n" +
+	"\fauthenticate\x18\r \x01(\v2\x17.goconnect.AuthenticateH\x00R\fauthenticateB\t\n" +
 	"\apayload\"*\n" +
 	"\tHandshake\x12\x1d\n" +
 	"\n" +
@@ -898,7 +959,9 @@ const file_proto_messages_proto_rawDesc = "" +
 	"Disconnect\x12\x16\n" +
 	"\x06reason\x18\x01 \x01(\tR\x06reason\"$\n" +
 	"\bErrorMsg\x12\x18\n" +
-	"\amessage\x18\x01 \x01(\tR\amessageB$Z\"github.com/mkloubert/go-connect/pbb\x06proto3"
+	"\amessage\x18\x01 \x01(\tR\amessage\"7\n" +
+	"\fAuthenticate\x12'\n" +
+	"\x0fpassphrase_hash\x18\x01 \x01(\fR\x0epassphraseHashB$Z\"github.com/mkloubert/go-connect/pbb\x06proto3"
 
 var (
 	file_proto_messages_proto_rawDescOnce sync.Once
@@ -912,7 +975,7 @@ func file_proto_messages_proto_rawDescGZIP() []byte {
 	return file_proto_messages_proto_rawDescData
 }
 
-var file_proto_messages_proto_msgTypes = make([]protoimpl.MessageInfo, 13)
+var file_proto_messages_proto_msgTypes = make([]protoimpl.MessageInfo, 14)
 var file_proto_messages_proto_goTypes = []any{
 	(*Envelope)(nil),       // 0: goconnect.Envelope
 	(*Handshake)(nil),      // 1: goconnect.Handshake
@@ -927,6 +990,7 @@ var file_proto_messages_proto_goTypes = []any{
 	(*Heartbeat)(nil),      // 10: goconnect.Heartbeat
 	(*Disconnect)(nil),     // 11: goconnect.Disconnect
 	(*ErrorMsg)(nil),       // 12: goconnect.ErrorMsg
+	(*Authenticate)(nil),   // 13: goconnect.Authenticate
 }
 var file_proto_messages_proto_depIdxs = []int32{
 	1,  // 0: goconnect.Envelope.handshake:type_name -> goconnect.Handshake
@@ -941,11 +1005,12 @@ var file_proto_messages_proto_depIdxs = []int32{
 	10, // 9: goconnect.Envelope.heartbeat:type_name -> goconnect.Heartbeat
 	11, // 10: goconnect.Envelope.disconnect:type_name -> goconnect.Disconnect
 	12, // 11: goconnect.Envelope.error_msg:type_name -> goconnect.ErrorMsg
-	12, // [12:12] is the sub-list for method output_type
-	12, // [12:12] is the sub-list for method input_type
-	12, // [12:12] is the sub-list for extension type_name
-	12, // [12:12] is the sub-list for extension extendee
-	0,  // [0:12] is the sub-list for field type_name
+	13, // 12: goconnect.Envelope.authenticate:type_name -> goconnect.Authenticate
+	13, // [13:13] is the sub-list for method output_type
+	13, // [13:13] is the sub-list for method input_type
+	13, // [13:13] is the sub-list for extension type_name
+	13, // [13:13] is the sub-list for extension extendee
+	0,  // [0:13] is the sub-list for field type_name
 }
 
 func init() { file_proto_messages_proto_init() }
@@ -966,6 +1031,7 @@ func file_proto_messages_proto_init() {
 		(*Envelope_Heartbeat)(nil),
 		(*Envelope_Disconnect)(nil),
 		(*Envelope_ErrorMsg)(nil),
+		(*Envelope_Authenticate)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
@@ -973,7 +1039,7 @@ func file_proto_messages_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_messages_proto_rawDesc), len(file_proto_messages_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   13,
+			NumMessages:   14,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

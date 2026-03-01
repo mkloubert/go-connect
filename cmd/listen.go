@@ -51,7 +51,12 @@ func NewListenCommand() *cobra.Command {
 				connectionID = uuid.New().String()
 			}
 
-			listener := tunnel.NewListener(args[0], args[1], connectionID)
+			passphrase, _ := cmd.Flags().GetString("passphrase")
+			if passphrase == "" {
+				passphrase = os.Getenv("GO_CONNECT_PASSPHRASE")
+			}
+
+			listener := tunnel.NewListener(args[0], args[1], connectionID, passphrase)
 			if err := listener.Start(); err != nil {
 				return fmt.Errorf("failed to start listener: %w", err)
 			}
@@ -77,6 +82,7 @@ func NewListenCommand() *cobra.Command {
 	}
 
 	cmd.Flags().String("id", "", "connection ID to use (overrides GO_CONNECT_ID env var; auto-generated if empty)")
+	cmd.Flags().String("passphrase", "", "passphrase for broker authentication (overrides GO_CONNECT_PASSPHRASE env var)")
 
 	return cmd
 }
