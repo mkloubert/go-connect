@@ -328,7 +328,8 @@ go-connect/
 │   ├── tunnel/                # Listener, connector, and reconnect logic
 │   └── ui/                    # Colored terminal output and network interface listing
 ├── proto/                     # Protobuf definitions
-└── test/                      # Integration tests
+├── test/                      # Integration tests
+└── types/                     # Application context and CLI command registration
 ```
 
 ## Testing
